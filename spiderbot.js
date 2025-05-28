@@ -17,7 +17,7 @@ const STORE_ITEMS = {
     shelf: {
         name: "Bookshelf Access",
         description: "Grants you the Shelf Owner role (reader role required separately from staff)",
-        price: 2,
+        price: 1,
         role: "Shelf Owner",
         emoji: "📚"
     }
@@ -25,7 +25,6 @@ const STORE_ITEMS = {
 
 const ALLOWED_FEEDBACK_THREADS = ['bookshelf-feedback', 'bookshelf-discussion'];
 const MONTHLY_FEEDBACK_REQUIREMENT = 2;
-const MINIMUM_FEEDBACK_FOR_SHELF = 2;
 
 // ===== DATA STORAGE =====
 let monthlyFeedback = {};
@@ -65,7 +64,7 @@ function hasLevel5Role(member) {
         return false;
     });
     
-    console.log(`${member.displayName} has Level 5 role:`, hasRole);
+    console.log(`${member.displayName} has Level 5+ role:`, hasRole);
     return hasRole;
 }
 
@@ -78,6 +77,7 @@ function getUserData(userId) {
     if (!userData[userId]) {
         userData[userId] = {
             totalFeedbackAllTime: 0,
+            currentCredits: 0, // Available credits for posting
             purchases: [],
             bookshelfPosts: 0
         };
@@ -87,10 +87,12 @@ function getUserData(userId) {
     // Ensure all properties exist and are correct types
     if (!Array.isArray(user.purchases)) user.purchases = [];
     if (typeof user.totalFeedbackAllTime !== 'number') user.totalFeedbackAllTime = 0;
+    if (typeof user.currentCredits !== 'number') user.currentCredits = 0;
     if (typeof user.bookshelfPosts !== 'number') user.bookshelfPosts = 0;
     
     // Ensure no negative values
     user.totalFeedbackAllTime = Math.max(0, user.totalFeedbackAllTime);
+    user.currentCredits = Math.max(0, user.currentCredits);
     user.bookshelfPosts = Math.max(0, user.bookshelfPosts);
     
     return user;
@@ -376,12 +378,14 @@ async function processFeedbackContribution(userId) {
     
     const user = getUserData(userId);
     user.totalFeedbackAllTime += 1;
+    user.currentCredits += 1; // Add 1 credit for each feedback
     
     await saveData();
     
     return {
         newCount,
         totalAllTime: user.totalFeedbackAllTime,
+        currentCredits: user.currentCredits,
         requirementMet: newCount >= MONTHLY_FEEDBACK_REQUIREMENT
     };
 }
@@ -439,7 +443,11 @@ const commands = [
         .setName('buy')
         .setDescription('Purchase an item from the store')
         .addStringOption(option => option.setName('item').setDescription('Item to purchase').setRequired(true)
-            .addChoices({ name: 'Bookshelf Access (2 credits)', value: 'shelf' })),
+            .addChoices({ name: 'Bookshelf Access (1 credit)', value: 'shelf' })),
+    
+    new SlashCommandBuilder()
+        .setName('post_chapter')
+        .setDescription('Post a new chapter in your bookshelf thread (costs 1 credit)'),
     
     new SlashCommandBuilder()
         .setName('hall_of_fame')
@@ -594,21 +602,20 @@ async function sendBookshelfAccessDeniedDM(author, reason, user = null, member =
         
         no_access: new EmbedBuilder()
             .setTitle('Bookshelf Access Required ☝️')
-            .setDescription(`Dear ${author}, I regret to inform you that posting in the bookshelf forum requires specific roles and dedication to our literary community.`)
+            .setDescription(`Dear ${author}, I regret to inform you that posting in the bookshelf forum requires specific roles.`)
             .addFields(
-                { name: 'Requirements to Post', value: `• **Minimum ${MINIMUM_FEEDBACK_FOR_SHELF} feedback credits** (You have: ${user?.totalFeedbackAllTime || 0})\n• **Shelf Owner role** (purchasable with 2 credits)\n• **reader role** (assigned by staff)\n• **Both roles required** to create or post in threads`, inline: false },
-                { name: 'Your Current Status', value: `• Credits: ${user?.totalFeedbackAllTime || 0}\n• Shelf Owner: ${member && hasShelfRole(member) ? '✅' : '❌'}\n• reader role: ${member && hasReaderRole(member) ? '✅' : '❌'}`, inline: false },
-                { name: 'How to Gain Access', value: '1. Give feedback to fellow writers and log it with `/feedback`\n2. Purchase "Shelf Owner" role from `/store` for 2 credits\n3. Request reader role assignment from staff\n4. Return here to share your literary works', inline: false }
+                { name: 'Requirements to Post', value: `• **Shelf Owner role** (purchasable with 1 credit)\n• **reader role** (assigned by staff based on feedback quality)\n• **Both roles required** to create or post in threads`, inline: false },
+                { name: 'Your Current Status', value: `• Credits Available: ${user?.currentCredits || 0}\n• Shelf Owner: ${member && hasShelfRole(member) ? '✅' : '❌'}\n• reader role: ${member && hasReaderRole(member) ? '✅' : '❌'}`, inline: false },
+                { name: 'How to Gain Access', value: '1. Give feedback to fellow writers and log it with `/feedback`\n2. Purchase "Shelf Owner" role from `/store` for 1 credit\n3. Staff will review your feedback quality and assign reader role\n4. Use `/post_chapter` to post chapters (costs 1 credit each)', inline: false }
             )
             .setColor(0xFF9900),
         
         no_credits: new EmbedBuilder()
-            .setTitle('Insufficient Chapter Credits ☝️')
-            .setDescription(`Dear ${author}, while you possess the necessary roles, each chapter beyond your first requires additional feedback credits.`)
+            .setTitle('Insufficient Credits ☝️')
+            .setDescription(`Dear ${author}, you need at least 1 credit to post a chapter. Each chapter costs 1 credit.`)
             .addFields(
-                { name: 'Your Bookshelf Activity', value: `• **Chapters posted:** ${user?.bookshelfPosts || 0}\n• **Total feedback given:** ${user?.totalFeedbackAllTime || 0}\n• **Additional feedback needed:** ${Math.abs((user?.totalFeedbackAllTime || 0) - (user?.bookshelfPosts || 0) - 1) + 1}`, inline: false },
-                { name: 'How the System Works', value: '• **First chapter ever:** Free after gaining access\n• **Each additional chapter:** Requires 1 more total feedback credit\n• **Example:** 5 total feedback = 4 chapters allowed (1 free + 3 earned)', inline: false },
-                { name: 'How to Earn More Credits', value: `Give feedback to fellow writers in the forums and log it with \`/feedback\``, inline: false }
+                { name: 'Your Status', value: `• **Current credits:** ${user?.currentCredits || 0}\n• **Credits needed:** 1`, inline: false },
+                { name: 'How to Earn Credits', value: `Give feedback to fellow writers in the forums and log it with \`/feedback\` to earn more credits`, inline: false }
             )
             .setColor(0xFF9900)
     };
@@ -696,6 +703,7 @@ async function handleCommand(message) {
             help: () => handleHelpCommand(message),
             commands: () => handleCommandsCommand(message),
             hall_of_fame: () => handleHallOfFameCommand(message),
+            post_chapter: () => handlePostChapterCommand(message),
             stats: () => handleStatsCommand(message),
             balance: () => handleBalanceCommand(message),
             store: () => handleStoreCommand(message),
@@ -723,6 +731,7 @@ async function handleSlashCommand(interaction) {
         help: () => handleHelpSlashCommand(interaction),
         commands: () => handleCommandsSlashCommand(interaction),
         hall_of_fame: () => handleHallOfFameSlashCommand(interaction),
+        post_chapter: () => handlePostChapterSlashCommand(interaction),
         stats: () => handleStatsSlashCommand(interaction),
         balance: () => handleBalanceSlashCommand(interaction),
         store: () => handleStoreSlashCommand(interaction),
@@ -767,19 +776,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         }
     }
     
-    if (!hasLevel5Role(member)) {
-        const embed = new EmbedBuilder()
-            .setTitle('Insufficient Standing')
-            .setDescription('I fear you must first attain Level 5 standing within our community before you may log feedback credits, dear writer. Continue your literary journey and return when you have gained the necessary experience.')
-            .setColor(0xFF9900);
-        
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
-        }
-    }
-    
     // Check if this is the user's own thread (prevent self-feedback logging)
     if (channel.isThread() && channel.ownerId === user.id) {
         const embed = new EmbedBuilder()
@@ -808,7 +804,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
             .setDescription('I regret that I could not locate a recent message from you in this thread, dear writer. Please ensure you have posted your feedback before attempting to log it.')
             .addFields({
                 name: 'How to Use This Command',
-                value: '1. Post your feedback/critique in this thread\n2. Use `/feedback` or `!feedback` to log your most recent message\n3. This awards you feedback credits and dinars',
+                value: '1. Post your feedback/critique in this thread\n2. Use `/feedback` or `!feedback` to log your most recent message\n3. This awards you feedback credits',
                 inline: false
             })
             .setColor(0xFF9900);
@@ -884,7 +880,113 @@ function createFeedbackStatusEmbed(user, requester) {
         .setColor(monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 0x00AA55 : 0xFF9900);
 }
 
-// ===== HALL OF FAME COMMAND =====
+// ===== POST CHAPTER COMMANDS =====
+async function handlePostChapterCommand(message) {
+    console.log(`Processing !post_chapter command for ${message.author.displayName}`);
+    return await processPostChapterCommand(message.author, message.member, message.channel, false);
+}
+
+async function handlePostChapterSlashCommand(interaction) {
+    console.log(`Processing /post_chapter command for ${interaction.user.displayName}`);
+    return await processPostChapterCommand(interaction.user, interaction.member, interaction.channel, true, interaction);
+}
+
+async function processPostChapterCommand(user, member, channel, isSlash, interaction = null) {
+    // Check if in bookshelf thread
+    if (!channel.isThread() || !channel.parent || channel.parent.name !== 'bookshelf') {
+        const embed = new EmbedBuilder()
+            .setTitle('Bookshelf Thread Required ☝️')
+            .setDescription('I regret to inform you that the post chapter command may only be used within your own bookshelf thread, dear writer.')
+            .addFields({
+                name: 'How to Use',
+                value: '• Go to your thread in the #bookshelf forum\n• Use `/post_chapter` to post a new chapter (costs 1 credit)\n• Only the thread owner may post chapters',
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        if (isSlash) {
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            return await replyTemporaryMessage(message, { embeds: [embed] });
+        }
+    }
+    
+    // Check if user is the thread owner
+    if (channel.ownerId !== user.id) {
+        const embed = new EmbedBuilder()
+            .setTitle('Thread Owner Only ☝️')
+            .setDescription('I regret to inform you that only the thread owner may post chapters in their bookshelf thread, dear writer.')
+            .setColor(0xFF9900);
+        
+        if (isSlash) {
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            return await replyTemporaryMessage(message, { embeds: [embed] });
+        }
+    }
+    
+    const userId = user.id;
+    const userRecord = getUserData(userId);
+    
+    // Check if user has both required roles
+    if (!canPostInBookshelf(userId, member)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Required Roles Missing ☝️')
+            .setDescription('I regret to inform you that posting chapters requires both the Shelf Owner role and the reader role, dear writer.')
+            .addFields({
+                name: 'Your Current Status',
+                value: `• Shelf Owner: ${hasShelfRole(member) ? '✅' : '❌'}\n• reader role: ${hasReaderRole(member) ? '✅' : '❌'}`,
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        if (isSlash) {
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            return await replyTemporaryMessage(message, { embeds: [embed] });
+        }
+    }
+    
+    // Check if user has credits
+    if (userRecord.currentCredits < 1) {
+        const embed = new EmbedBuilder()
+            .setTitle('Insufficient Credits ☝️')
+            .setDescription(`I regret to inform you that posting a chapter requires 1 credit, dear writer. You currently have ${userRecord.currentCredits} credits.`)
+            .addFields({
+                name: 'How to Earn Credits',
+                value: 'Give feedback to fellow writers in the feedback forums and log it with `/feedback` to earn more credits.',
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        if (isSlash) {
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            return await replyTemporaryMessage(message, { embeds: [embed] });
+        }
+    }
+    
+    // Spend the credit and update posts count
+    spendCredits(userId, 1);
+    userRecord.bookshelfPosts += 1;
+    await saveData();
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Chapter Posted Successfully ☝️')
+        .setDescription(`Your chapter has been graciously posted, ${user}. Your dedication to sharing your literary work with our community is most commendable.`)
+        .addFields(
+            { name: 'Credits Spent', value: `📝 1 credit`, inline: true },
+            { name: 'Credits Remaining', value: `💰 ${userRecord.currentCredits}`, inline: true },
+            { name: 'Total Chapters Posted', value: `📚 ${userRecord.bookshelfPosts}`, inline: true }
+        )
+        .setColor(0x00AA55);
+    
+    if (isSlash) {
+        await replyTemporary(interaction, { embeds: [embed] });
+    } else {
+        await replyTemporaryMessage(message, { embeds: [embed] });
+    }
+}
 async function handleHallOfFameCommand(message) {
     const embed = await createHallOfFameEmbed(message.guild);
     await replyTemporaryMessage(message, { embeds: [embed] });
@@ -952,7 +1054,7 @@ function createAllCommandsEmbed() {
         .setDescription('Your comprehensive guide to all available commands in our literary realm, organized by purpose and authority level.')
         .addFields(
             { 
-                name: '📝 Feedback System (Level 5 Required)', 
+                name: '📝 Feedback System (Level 5+ Required)', 
                 value: '`/feedback` or `!feedback` - Log your most recent feedback message\n`/feedback_status [user]` - Check monthly feedback status', 
                 inline: false 
             },
@@ -1017,6 +1119,7 @@ async function addFeedbackToUser(userId, amount) {
     
     const userRecord = getUserData(userId);
     userRecord.totalFeedbackAllTime += amount;
+    userRecord.currentCredits += amount; // Also add to current credits
     
     await saveData();
     return { currentCount, newCount };
@@ -1282,15 +1385,18 @@ async function handleBalanceSlashCommand(interaction) {
 function createBalanceEmbed(user) {
     const userId = user.id;
     const userRecord = getUserData(userId);
+    const monthlyCount = getUserMonthlyFeedback(userId);
+    const monthlyQuotaStatus = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 'Monthly quota fulfilled' : 'Monthly quota unfulfilled';
     
     return new EmbedBuilder()
         .setTitle(`${user.displayName}'s Literary Standing ☝️`)
         .setDescription(`Allow me to present the current literary standing and achievements of this distinguished writer.`)
         .addFields(
-            { name: 'Feedback Credits', value: `📝 ${userRecord.totalFeedbackAllTime} credit${userRecord.totalFeedbackAllTime !== 1 ? 's' : ''}`, inline: true },
-            { name: 'Monthly Progress', value: `${getUserMonthlyFeedback(userId)}/${MONTHLY_FEEDBACK_REQUIREMENT} this month`, inline: true },
+            { name: 'Total Credits Earned', value: `📝 ${userRecord.totalFeedbackAllTime}`, inline: true },
+            { name: 'Monthly Credits', value: `📅 ${monthlyCount}`, inline: true },
+            { name: 'Current Credit Balance', value: `💰 ${userRecord.currentCredits}`, inline: true },
+            { name: 'Monthly Status', value: `${monthlyQuotaStatus}`, inline: true },
             { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId), inline: true },
-            { name: 'Chapter Credits', value: getPostCreditStatus(userId), inline: false },
             { name: 'Purchases Made', value: userRecord.purchases.length > 0 ? userRecord.purchases.map(item => `• ${STORE_ITEMS[item]?.name || item}`).join('\n') : 'None yet', inline: false }
         )
         .setColor(canPostInBookshelf(userId) ? 0x00AA55 : 0xFF9900);
@@ -1311,9 +1417,9 @@ function createStoreEmbed() {
         .setTitle('Type&Draft Literary Emporium ☝️')
         .setDescription('Welcome to our humble establishment, where dedication to the craft is rewarded with privileges. Examine our current offerings, crafted with the utmost care for our literary community.')
         .addFields(
-            { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in #bookshelf\n**Price:** ${STORE_ITEMS.shelf.price} feedback credits\n**Requirements:** ${MINIMUM_FEEDBACK_FOR_SHELF}+ total feedback credits\n**Note:** reader role must be assigned by staff separately`, inline: false },
-            { name: 'How to Earn Credits', value: `• **Provide feedback** to fellow writers in the designated forums\n• **Log contributions** with \`/feedback\` to earn credits\n• **Build your reputation** through meaningful engagement`, inline: false },
-            { name: 'Important Notice', value: 'To post in #bookshelf, you need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned). Contact staff for reader role assignment after purchase.', inline: false }
+            { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in #bookshelf\n**Price:** ${STORE_ITEMS.shelf.price} feedback credit\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
+            { name: 'How to Earn Credits', value: `• **Provide feedback** to fellow writers in the designated forums\n• **Log contributions** with \`/feedback\` to earn 1 credit each\n• **Build your reputation** through meaningful engagement`, inline: false },
+            { name: 'Important Notice', value: 'To post chapters in #bookshelf, you need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned based on feedback quality). Each chapter posted costs 1 credit via `/post_chapter`.', inline: false }
         )
         .setColor(0x2F3136)
         .setFooter({ text: 'All purchases support our thriving literary community.' });
@@ -1345,21 +1451,12 @@ async function processPurchase(userId, itemKey, member, guild) {
         return { success: false, reason: 'already_purchased' };
     }
     
-    if (itemKey === 'shelf' && userRecord.totalFeedbackAllTime < MINIMUM_FEEDBACK_FOR_SHELF) {
-        return { 
-            success: false, 
-            reason: 'insufficient_feedback',
-            needed: MINIMUM_FEEDBACK_FOR_SHELF - userRecord.totalFeedbackAllTime,
-            current: userRecord.totalFeedbackAllTime
-        };
-    }
-    
-    if (userRecord.totalFeedbackAllTime < item.price) {
+    if (userRecord.currentCredits < item.price) {
         return {
             success: false,
             reason: 'insufficient_credits',
-            needed: item.price - userRecord.totalFeedbackAllTime,
-            current: userRecord.totalFeedbackAllTime,
+            needed: item.price - userRecord.currentCredits,
+            current: userRecord.currentCredits,
             price: item.price
         };
     }
@@ -1372,7 +1469,7 @@ async function processPurchase(userId, itemKey, member, guild) {
         }
         
         await saveData();
-        return { success: true, creditsUsed: item.price };
+        return { success: true, creditsSpent: item.price };
     }
     
     return { success: false, reason: 'unknown_error' };
@@ -1420,23 +1517,13 @@ function createPurchaseResultEmbed(user, itemKey, result) {
                 .setDescription(`You have already acquired ${item.name}, dear writer. There is no need for duplicate purchases.`)
                 .setColor(0xFF9900),
             
-            insufficient_feedback: new EmbedBuilder()
-                .setTitle('Insufficient Literary Credits')
-                .setDescription(`I regret to inform you that bookshelf access requires a minimum of **${MINIMUM_FEEDBACK_FOR_SHELF} feedback credits**. You currently have ${result.current}.`)
-                .addFields({
-                    name: 'How to Qualify',
-                    value: `• Provide feedback to fellow writers\n• Log each credit with \`/feedback\`\n• Return when you have ${result.needed} more credit${result.needed === 1 ? '' : 's'}`,
-                    inline: false
-                })
-                .setColor(0xFF6B6B),
-            
             insufficient_credits: new EmbedBuilder()
                 .setTitle('Insufficient Credits')
-                .setDescription(`I fear your current total of ${result.current} credits is insufficient for this purchase.`)
+                .setDescription(`I fear your current balance of ${result.current} credits is insufficient for this purchase.`)
                 .addFields({
-                    name: 'Required Amount', value: `${result.price} credits`, inline: true
+                    name: 'Required Amount', value: `${result.price} credit${result.price === 1 ? '' : 's'}`, inline: true
                 }, {
-                    name: 'Still Needed', value: `${result.needed} more feedback credit${result.needed === 1 ? '' : 's'}`, inline: true
+                    name: 'Still Needed', value: `${result.needed} more credit${result.needed === 1 ? '' : 's'}`, inline: true
                 })
                 .setColor(0xFF6B6B)
         };
@@ -1449,10 +1536,10 @@ function createPurchaseResultEmbed(user, itemKey, result) {
         .setDescription(`Congratulations, ${user}! Your acquisition of ${item.name} has been processed with the utmost care.`)
         .addFields(
             { name: 'Item Purchased', value: `${item.emoji} ${item.name}`, inline: true },
-            { name: 'Credits Used', value: `📝 ${result.creditsUsed} credits`, inline: true },
+            { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
             { name: 'Role Granted', value: `🎭 Shelf Owner`, inline: true },
-            { name: 'Important Notice', value: '⚠️ **reader role required separately from staff** to create threads in #bookshelf forum. Contact staff for reader role assignment.', inline: false },
-            { name: 'Next Steps', value: '1. Contact staff to request reader role assignment\n2. Once you have both roles, you may create threads in #bookshelf\n3. Each chapter posted uses 1 of your feedback credits', inline: false }
+            { name: 'Important Notice', value: '⚠️ **reader role required separately from staff** to post chapters in #bookshelf forum. Staff will review your feedback quality and assign the reader role when appropriate.', inline: false },
+            { name: 'Next Steps', value: '1. Continue giving quality feedback to fellow writers\n2. Staff will review and assign reader role when ready\n3. Once you have both roles, use `/post_chapter` to post chapters (1 credit each)', inline: false }
         )
         .setColor(0x00AA55);
 }
@@ -1569,7 +1656,7 @@ function createHelpEmbed() {
         .setDescription('Welcome to our distinguished literary community! Here are the fundamental commands for the feedback and credit system:')
         .addFields(
             { 
-                name: '📝 Earning Feedback Credits (Level 5 Required)', 
+                name: '📝 Earning Feedback Credits (Level 5+ Required)', 
                 value: '**Step 1:** Visit #bookshelf-feedback or #bookshelf-discussion forums\n**Step 2:** Find another writer\'s thread and provide thoughtful feedback\n**Step 3:** Use `/feedback` to log your most recent feedback message\n**Step 4:** Earn 1 credit per logged feedback contribution!', 
                 inline: false 
             },
@@ -1585,7 +1672,7 @@ function createHelpEmbed() {
             },
             { 
                 name: '✍️ How It Works', 
-                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 2 credits\n• **Request reader role** from staff after purchase\n• **Post chapters** using your accumulated credits\n• **Each chapter** posted uses 1 feedback credit', 
+                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 2+ credits\n• **Request reader role** from staff after purchase\n• **Post chapters** using your accumulated credits\n• **Each chapter** posted uses 1 feedback credit', 
                 inline: false 
             },
             { 
