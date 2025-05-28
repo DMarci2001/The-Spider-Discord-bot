@@ -6,3 +6,5 @@ Make this clear in the welcome message, as well as the /help command. The help c
 economy system with the credits, and list the commands relevant to them. Modify the last line of /help with this: name: '👑 Staff Commands', 
                 value: 'Use `/commands` to see the complete list of all available staff tools.', 
                 inline: false 
+3. I expect this to make the server's mechanics more straightforward, and make the code more robust, precise, error-proof, and logical. 
+Please check for possible logical fallacies, and edge cases, and fix them, and make the code as clean as possible.
