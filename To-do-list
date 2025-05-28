@@ -46,6 +46,25 @@ I regret that an unforeseen complication has arisen while processing your reques
 Perhaps you might try again, or seek assistance from our esteemed staff?". This command can only be used by the OP of 
 the #bookshelf thread, others can't use it, by the way! and it can only be used under a #bookshelf thread.
 
+Version 4:
+
+1. Now at least the bot welcomes the user, but it welcomes them in #general instead of #welcome. Also, 
+the welcome message should use # links to the channels.
+2. You can omit the functionality that checks if the introductions follow the rules. I don't need the bot to do that.
+3. When a member reads the server and rejoins, they still retain all their credits for some reason, which should not be the case.
+They should lose everything upon leaving the server and rejoining.
+4. For a member who already has the reader role, the balance message says "Shelf Owner role acquired - reader role needed from staff", 
+sp the message is worded wrong, and needs to be different in this particular case.
+5. The feedback_remove should only manipulate the current credit balance. The command doesn't 
+even work, because the balance still shows the same amount of credit after a moderators calls the remove comment to remove some.
+
+In the code:
+
+1. Check for the term "literary community" in the code, and cut back on it.
+2. Check for "5+" and "1+" and delete the pluses.
+3. "Staff will review and assign reader role when ready" reword this message, and use @reader terminology.
+
+
 
 
 
