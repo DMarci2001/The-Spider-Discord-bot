@@ -1657,7 +1657,7 @@ function createHelpEmbed() {
             },
             { 
                 name: '✍️ How It Works', 
-                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 2+ credits\n• **Request reader role** from staff after purchase\n• **Post chapters** using `/post_chapter` (costs 1 credit each)', 
+                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 1 free credit for it\n• **Request reader role** from staff after purchase\n• **Post chapters** using `/post_chapter` (costs 1 credit each)', 
                 inline: false 
             },
             { 
