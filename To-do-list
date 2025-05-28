@@ -1,7 +1,7 @@
 1. Remove the dinar system, and make the credits do everything in the economy. Instead of 200 dinars, two credits for a bookshelf. Update the 
 /balance command accordingly, as well as the /store and /buy commands. Now the /richest command should be /hall_of_fame.
 2. Make it so that the @reader role must be assigned by the moderators, so you don't automatically get to post when you buy a shelf.
-You only get the Shelf Owner role, but not the reader role. Still, you can only create a thread in the #bookshelf still if you got the reader role.
+You only get the Shelf Owner role, but not the reader role. Still, you can only create a thread in the #bookshelf if you got the reader role.
 Make this clear in the welcome message, as well as the /help command. The help command should explain the basic functionality of the feedback and
 economy system with the credits, and list the commands relevant to them. Modify the last line of /help with this: name: '👑 Staff Commands', 
                 value: 'Use `/commands` to see the complete list of all available staff tools.', 
