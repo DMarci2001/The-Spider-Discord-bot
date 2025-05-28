@@ -30,6 +30,21 @@ if not, then "monthly quota unfulfilled". It also shouldn't show the credits rem
 current credit balance.
 7. The hall of fame should only show the top 10.
 
+Version 3:
+
+1. It still doesn't welcome joining users in the #welcome channels wit the welcome message. That is very important.
+2. I said reset all progress of a user, including credits and everything when they are kicked, banned, or leave the server,
+yet it doesn't get reset.
+3. For some reason, the /balance command doesn't work, and gives this error message: An Unforeseen Complication
+I regret that an unforeseen complication has arisen while processing your request. Perhaps you might try again,
+or seek assistance from our esteemed staff?
+4. Also, now something is very wrong, because now new users just create a thread under the #bookshelf forum on a whim,
+when I made it clear that they can only do this, if they have the reader role assigned to them, otherwise they can't.
+5. The post_chapter command doesn't work either, and it says "An Unforeseen Complication
+I regret that an unforeseen complication has arisen while processing your request. 
+Perhaps you might try again, or seek assistance from our esteemed staff?". This command can only be used by the OP of 
+the #bookshelf thread, others can't use it, by the way! and it can only be used under a #bookshelf thread.
+
 
 
 
