@@ -70,6 +70,10 @@ the welcome embed appeared correctly, only in the wrong channel, #general, but n
 when they shouldn't, and the command still doesn't work in general, because it doesn't remove the credit, because after 
 feedback_remove is called, the balance command still shows the same amount as before the remove command was called.
 
+Version 6:
+
+1. Completely new members can leave a feedback command under threads without having posted a message there first.
+
 In the code:
 
 1. Check for the term "literary community" in the code, and cut back on it.
