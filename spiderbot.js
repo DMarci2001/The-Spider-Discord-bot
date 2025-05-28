@@ -17,7 +17,7 @@ const STORE_ITEMS = {
     shelf: {
         name: "Bookshelf Access",
         description: "Grants you the Shelf Owner role (reader role required separately from staff)",
-        price: 2,
+        price: 1,
         role: "Shelf Owner",
         emoji: "📚"
     }
@@ -500,7 +500,7 @@ const commands = [
         .setName('buy')
         .setDescription('Purchase an item from the store')
         .addStringOption(option => option.setName('item').setDescription('Item to purchase').setRequired(true)
-            .addChoices({ name: 'Bookshelf Access (2 credits)', value: 'shelf' })),
+            .addChoices({ name: 'Bookshelf Access (1 credit)', value: 'shelf' })),
     
     new SlashCommandBuilder()
         .setName('post_chapter')
