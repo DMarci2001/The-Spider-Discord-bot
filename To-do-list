@@ -13,4 +13,23 @@ Please check for possible logical fallacies, and edge cases, and fix them, and m
 
 Version 2:
 
+1. The bot doesn't send the welcome message into the #welcome channel.
+2. If someone leaves the server, all their progress should reset itself.
+3. Remove the functionality where you have to be Level 5 to give feedback, because on the server,
+the #bookshelf forum only becomes visible when members reach Level 5.
+4. You shouldn't be able to post into the #bookshelf, unless you have the @reader role, which is assigned by the moderators. Members also don't have
+to contact the moderators for it, the moderators will check by themselves if the feedback given if sufficient, and if it is, they will give the
+member the reader role.
+5. Make the shelf cost one credit, and the first chapter you post under you thread in the #bookshelf cost one credit as well(so the bot
+should sense when someone uses /post_chapter, and subtract a credit from their balance. each subsequent use of the post_chapter command subtracts
+one more credit from the member's balance
+6. The /balance command should show the total credits, as well as the monthly credits(but not in the x/2 format, simply the number of
+feedbacks in the current month should be enough), as well as the current credit balance. and then a separate indicator if the user gave at least
+two feedbacks a month, then "monthly quota fulfilled",
+if not, then "monthly quota unfulfilled". It also shouldn't show the credits remaining to post a chapter, because it should be obvious from the
+current credit balance.
+7. The hall of fame should only show the top 10.
+
+
+
 
