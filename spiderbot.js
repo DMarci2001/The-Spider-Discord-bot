@@ -939,7 +939,7 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
     // Check if in bookshelf thread
     if (!channel.isThread() || !channel.parent || channel.parent.name !== 'bookshelf') {
         const embed = new EmbedBuilder()
-            .setTitle('Bookshelf Thread Required ☝️')
+            .setTitle('Wrong Thread ☝️')
             .setDescription('I regret to inform you that the post chapter command may only be used within your own bookshelf thread, dear writer.')
             .addFields({
                 name: 'How to Use',
