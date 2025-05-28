@@ -10,7 +10,7 @@ post a chapter with /post_chapter, see if the credit amount is reduced, use /bal
 7. See if user can use post_chapter if they have insufficient funds
 8. See if when the user uses /post_chapter their credit amount is diminished by one, using the /balance command.
 
-passed:
+from Version 4 passed:
 3, 4, 5, 6, 8
 still needs work:
 1, 2, 7
@@ -21,4 +21,14 @@ Version 5:
 2. See if the account is properly reset when a user is kicked or leaves
 3. See if the balance message is logical for a member who already has the reader role
 4. See if the feedback_remove command works properly
+
+from Version 4 passed:
+2, 3, 4, 5, 6, 7, 8
+still needs work:
+1
+
+from Version 5 passed:
+2, 3
+still needs work:
+1, 4
 
