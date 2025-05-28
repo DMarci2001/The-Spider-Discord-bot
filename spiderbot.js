@@ -17,7 +17,7 @@ const STORE_ITEMS = {
     shelf: {
         name: "Bookshelf Access",
         description: "Grants you the Shelf Owner role (reader role required separately from staff)",
-        price: 1,
+        price: 2,
         role: "Shelf Owner",
         emoji: "📚"
     }
@@ -65,7 +65,7 @@ function hasLevel5Role(member) {
         return false;
     });
     
-    console.log(`${member.displayName} has Level 5 role:`, hasRole);
+    console.log(`${member.displayName} has Level 5+ role:`, hasRole);
     return hasRole;
 }
 
@@ -130,9 +130,8 @@ function getBookshelfAccessStatus(userId, member = null) {
         } else {
             return '✅ Shelf Owner role acquired - reader role needed from staff';
         }
-    } else if (user.totalFeedbackAllTime < MINIMUM_FEEDBACK_FOR_SHELF) {
-        const needed = MINIMUM_FEEDBACK_FOR_SHELF - user.totalFeedbackAllTime;
-        return `📝 Need ${needed} more credit${needed === 1 ? '' : 's'} to qualify for purchase`;
+    } else if (user.totalFeedbackAllTime < 1) {
+        return `📝 Need 1 more credit to qualify for bookshelf purchase`;
     } else {
         return '💰 Ready to purchase shelf access (credit requirement met)';
     }
@@ -156,14 +155,13 @@ function getPostCreditStatus(userId, member) {
     const user = getUserData(userId);
     
     // If user doesn't have enough total feedback to even qualify for purchase
-    if (user.totalFeedbackAllTime < MINIMUM_FEEDBACK_FOR_SHELF) {
-        const needed = MINIMUM_FEEDBACK_FOR_SHELF - user.totalFeedbackAllTime;
-        return `📝 Need ${needed} more credit${needed === 1 ? '' : 's'} to qualify for purchase`;
+    if (user.totalFeedbackAllTime < 1) {
+        return `📝 Need bookshelf to qualify for purchase`;
     }
     
     // If user hasn't purchased shelf access yet
     if (!user.purchases.includes('shelf')) {
-        return '💰 Ready to purchase shelf access';
+        return '💰 Qualified for purchase';
     }
     
     // If user has purchased but doesn't have reader role
@@ -500,7 +498,7 @@ const commands = [
         .setName('buy')
         .setDescription('Purchase an item from the store')
         .addStringOption(option => option.setName('item').setDescription('Item to purchase').setRequired(true)
-            .addChoices({ name: 'Bookshelf Access (1 credit)', value: 'shelf' })),
+            .addChoices({ name: 'Bookshelf Access (2 credits)', value: 'shelf' })),
     
     new SlashCommandBuilder()
         .setName('post_chapter')
@@ -811,7 +809,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     if (!isInAllowedFeedbackThread(channel)) {
         const embed = new EmbedBuilder()
             .setTitle('Incorrect Thread ☝️')
-            .setDescription('I regret to inform you that feedback credits may only be logged within the designated literary threads of our community, under works other than your own.')
+            .setDescription('I regret to inform you that feedback credits may only be logged within the designated literary threads of our community.')
             .addFields({
                 name: 'Permitted Threads',
                 value: '• **bookshelf-feedback** forum - For recording feedback given to fellow writers\n• **bookshelf-discussion** forum - For discussions about literary critiques',
@@ -939,7 +937,7 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
     // Check if in bookshelf thread
     if (!channel.isThread() || !channel.parent || channel.parent.name !== 'bookshelf') {
         const embed = new EmbedBuilder()
-            .setTitle('Wrong Thread ☝️')
+            .setTitle('Bookshelf Thread Required ☝️')
             .setDescription('I regret to inform you that the post chapter command may only be used within your own bookshelf thread, dear writer.')
             .addFields({
                 name: 'How to Use',
@@ -1596,7 +1594,7 @@ function createAllCommandsEmbed() {
         .setDescription('Your comprehensive guide to all available commands in our literary realm, organized by purpose and authority level.')
         .addFields(
             { 
-                name: '📝 Feedback System (Level 5 Required)', 
+                name: '📝 Feedback System (Level 5+ Required)', 
                 value: '`/feedback` or `!feedback` - Log your most recent feedback message\n`/feedback_status [user]` - Check monthly feedback status', 
                 inline: false 
             },
@@ -1638,10 +1636,10 @@ async function handleHelpSlashCommand(interaction) {
 function createHelpEmbed() {
     return new EmbedBuilder()
         .setTitle('Essential Commands at Your Service ☝️')
-        .setDescription('Welcome to our distinguished literary community! Behold the fundamental commands for the feedback and credit system:')
+        .setDescription('Welcome to our distinguished literary community! Here are the fundamental commands for the feedback and credit system:')
         .addFields(
             { 
-                name: '📝 Earning Feedback Credits (Level 5 Required)', 
+                name: '📝 Earning Feedback Credits (Level 5+ Required)', 
                 value: '**Step 1:** Visit #bookshelf-feedback or #bookshelf-discussion forums\n**Step 2:** Find another writer\'s thread and provide thoughtful feedback\n**Step 3:** Use `/feedback` to log your most recent feedback message\n**Step 4:** Earn 1 credit per logged feedback contribution!', 
                 inline: false 
             },
@@ -1652,12 +1650,12 @@ function createHelpEmbed() {
             },
             { 
                 name: '📚 Bookshelf Access', 
-                value: '`/store` - View purchasable items\n`/buy shelf` - Purchase Shelf Owner role (1 credit)\n**Important:** You need **both** Shelf Owner role (purchasable) **and** reader role (staff-assigned) to post in #bookshelf', 
+                value: '`/store` - View purchasable items\n`/buy shelf` - Purchase Shelf Owner role (2 credits)\n**Important:** You need **both** Shelf Owner role (purchasable) **and** reader role (staff-assigned) to post in #bookshelf', 
                 inline: false 
             },
             { 
                 name: '✍️ How It Works', 
-                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 1 free credit for it\n• **Post chapters** using `/post_chapter` (costs 1 credit each)', 
+                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 2+ credits\n• **Request reader role** from staff after purchase\n• **Post chapters** using `/post_chapter` (costs 1 credit each)', 
                 inline: false 
             },
             { 
