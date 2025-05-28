@@ -50,7 +50,7 @@ Version 4:
 
 1. Now at least the bot welcomes the user, but it welcomes them in #general instead of #welcome. Also, 
 the welcome message should use # links to the channels.
-2. You can omit the functionality that checks if the introductions follow the rules. I don't need the bot to do that.
+2. Omit the functionality that checks if the introductions follow the rules. I don't need the bot to do that.
 3. When a member reads the server and rejoins, they still retain all their credits for some reason, which should not be the case.
 They should lose everything upon leaving the server and rejoining.
 4. For a member who already has the reader role, the balance message says "Shelf Owner role acquired - reader role needed from staff", 
