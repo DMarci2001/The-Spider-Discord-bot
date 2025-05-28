@@ -1652,7 +1652,7 @@ function createHelpEmbed() {
             },
             { 
                 name: '📚 Bookshelf Access', 
-                value: '`/store` - View purchasable items\n`/buy shelf` - Purchase Shelf Owner role (2 credits)\n**Important:** You need **both** Shelf Owner role (purchasable) **and** reader role (staff-assigned) to post in #bookshelf', 
+                value: '`/store` - View purchasable items\n`/buy shelf` - Purchase Shelf Owner role (1 credit)\n**Important:** You need **both** Shelf Owner role (purchasable) **and** reader role (staff-assigned) to post in #bookshelf', 
                 inline: false 
             },
             { 
