@@ -1638,7 +1638,7 @@ async function handleHelpSlashCommand(interaction) {
 function createHelpEmbed() {
     return new EmbedBuilder()
         .setTitle('Essential Commands at Your Service ☝️')
-        .setDescription('Welcome to our distinguished literary community! Here are the fundamental commands for the feedback and credit system:')
+        .setDescription('Welcome to our distinguished literary community! Behold the fundamental commands for the feedback and credit system:')
         .addFields(
             { 
                 name: '📝 Earning Feedback Credits (Level 5 Required)', 
