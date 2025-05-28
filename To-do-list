@@ -60,6 +60,16 @@ even work, because the balance still shows the same amount of credit after a mod
 6. Whatever changes you make, it's very important to integrate it seamlessly into the code so that everything works properly and the
 commands and text boxes synergize well with each other. Don't create any unnecessary complexity or redundancy in the code.
 
+Version 5:
+
+1. For completely new users the balance should say for the Post Status "Need 2 more credits to qualify for purchase"
+2. I don't know why it is so freaking hard to welcome the joining members in the #welcome channel. In the previous version, 
+the welcome embed appeared correctly, only in the wrong channel, #general, but now it doesn't appear again. MAKE IT APPEAR IN
+#welcome or is that impossible for you?
+3. With the feedback command, the Previous Balance and Current Balance indicators are buggy, because they both show 0, even
+when they shouldn't, and the command still doesn't work in general, because it doesn't remove the credit, because after 
+feedback_remove is called, the balance command still shows the same amount as before the remove command was called.
+
 In the code:
 
 1. Check for the term "literary community" in the code, and cut back on it.
