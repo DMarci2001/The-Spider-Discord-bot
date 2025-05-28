@@ -57,6 +57,8 @@ They should lose everything upon leaving the server and rejoining.
 sp the message is worded wrong, and needs to be different in this particular case.
 5. The feedback_remove should only manipulate the current credit balance. The command doesn't 
 even work, because the balance still shows the same amount of credit after a moderators calls the remove comment to remove some.
+6. Whatever changes you make, it's very important to integrate it seamlessly into the code so that everything works properly and the
+commands and text boxes synergize well with each other. Don't create any unnecessary complexity or redundancy in the code.
 
 In the code:
 
