@@ -1,3 +1,5 @@
+Version 1:
+
 1. Remove the dinar system, and make the credits do everything in the economy. Instead of 200 dinars, two credits for a bookshelf. Update the 
 /balance command accordingly, as well as the /store and /buy commands. Now the /richest command should be /hall_of_fame.
 2. Make it so that the @reader role must be assigned by the moderators, so you don't automatically get to post when you buy a shelf.
@@ -8,3 +10,7 @@ economy system with the credits, and list the commands relevant to them. Modify 
                 inline: false 
 3. I expect this to make the server's mechanics more straightforward, and make the code more robust, precise, error-proof, and logical. 
 Please check for possible logical fallacies, and edge cases, and fix them, and make the code as clean as possible.
+
+Version 2:
+
+
