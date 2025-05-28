@@ -16,8 +16,8 @@ const client = new Client({
 const STORE_ITEMS = {
     shelf: {
         name: "Bookshelf Access",
-        description: "Grants you the ability to post messages in the #bookshelf forum and assigns reader role",
-        price: 200,
+        description: "Grants you the Shelf Owner role (reader role required separately from staff)",
+        price: 2,
         role: "Shelf Owner",
         emoji: "📚"
     }
@@ -26,7 +26,6 @@ const STORE_ITEMS = {
 const ALLOWED_FEEDBACK_THREADS = ['bookshelf-feedback', 'bookshelf-discussion'];
 const MONTHLY_FEEDBACK_REQUIREMENT = 2;
 const MINIMUM_FEEDBACK_FOR_SHELF = 2;
-const DINARS_PER_FEEDBACK = 100;
 
 // ===== DATA STORAGE =====
 let monthlyFeedback = {};
@@ -66,7 +65,7 @@ function hasLevel5Role(member) {
         return false;
     });
     
-    console.log(`${member.displayName} has Level 5+ role:`, hasRole);
+    console.log(`${member.displayName} has Level 5 role:`, hasRole);
     return hasRole;
 }
 
@@ -79,7 +78,6 @@ function getUserData(userId) {
     if (!userData[userId]) {
         userData[userId] = {
             totalFeedbackAllTime: 0,
-            dinars: 0,
             purchases: [],
             bookshelfPosts: 0
         };
@@ -89,34 +87,35 @@ function getUserData(userId) {
     // Ensure all properties exist and are correct types
     if (!Array.isArray(user.purchases)) user.purchases = [];
     if (typeof user.totalFeedbackAllTime !== 'number') user.totalFeedbackAllTime = 0;
-    if (typeof user.dinars !== 'number') user.dinars = 0;
     if (typeof user.bookshelfPosts !== 'number') user.bookshelfPosts = 0;
     
     // Ensure no negative values
     user.totalFeedbackAllTime = Math.max(0, user.totalFeedbackAllTime);
-    user.dinars = Math.max(0, user.dinars);
     user.bookshelfPosts = Math.max(0, user.bookshelfPosts);
     
     return user;
 }
 
-function addDinars(userId, amount) {
-    const user = getUserData(userId);
-    const validAmount = Math.max(0, Math.floor(amount));
-    user.dinars += validAmount;
-    console.log(`Added ${validAmount} dinars to ${userId}, new balance: ${user.dinars}`);
-    return user.dinars;
+function hasReaderRole(member) {
+    if (!member?.roles?.cache) return false;
+    return member.roles.cache.some(role => role.name === 'reader');
 }
 
-function spendDinars(userId, amount) {
+function canCreateBookshelfThread(member) {
+    // Must have both Shelf Owner role AND reader role to create threads
+    return hasShelfRole(member) && hasReaderRole(member);
+}
+
+function spendCredits(userId, amount) {
     const user = getUserData(userId);
     const validAmount = Math.max(0, Math.floor(amount));
-    if (user.dinars >= validAmount) {
-        user.dinars -= validAmount;
-        console.log(`Spent ${validAmount} dinars for ${userId}, new balance: ${user.dinars}`);
+    if (user.totalFeedbackAllTime >= validAmount) {
+        // Credits are not actually "spent" - they represent total feedback given
+        // But we track purchases to prevent duplicate buying
+        console.log(`User ${userId} has sufficient credits: ${user.totalFeedbackAllTime} >= ${validAmount}`);
         return true;
     }
-    console.log(`Insufficient dinars for ${userId}: has ${user.dinars}, needs ${validAmount}`);
+    console.log(`Insufficient credits for ${userId}: has ${user.totalFeedbackAllTime}, needs ${validAmount}`);
     return false;
 }
 
@@ -127,11 +126,11 @@ function getBookshelfAccessStatus(userId) {
         return '✅ Access granted';
     } else if (user.totalFeedbackAllTime < MINIMUM_FEEDBACK_FOR_SHELF) {
         const needed = MINIMUM_FEEDBACK_FOR_SHELF - user.totalFeedbackAllTime;
-        return `📝 Need ${needed} more feedback${needed === 1 ? '' : 's'} to qualify for purchase`;
+        return `📝 Need ${needed} more credit${needed === 1 ? '' : 's'} to qualify for purchase`;
     } else if (!user.purchases.includes('shelf')) {
-        return '💰 Ready to purchase shelf access (feedback requirement met)';
+        return '💰 Ready to purchase shelf access (credit requirement met)';
     } else {
-        return '❓ Contact staff';
+        return '🔓 Shelf Owner role acquired - reader role needed from staff';
     }
 }
 
@@ -164,13 +163,13 @@ function getPostCreditStatus(userId) {
         return getBookshelfAccessStatus(userId);
     }
     
-    const messagesRemaining = user.totalFeedbackAllTime - user.bookshelfPosts - 1;
+    const chaptersRemaining = user.totalFeedbackAllTime - user.bookshelfPosts - 1;
     
-    if (messagesRemaining >= 1) {
-        return `✅ ${messagesRemaining} message${messagesRemaining === 1 ? '' : 's'} remaining`;
+    if (chaptersRemaining >= 1) {
+        return `✅ ${chaptersRemaining} chapter${chaptersRemaining === 1 ? '' : 's'} remaining`;
     } else {
-        const needed = Math.abs(messagesRemaining) + 1;
-        return `📝 Need ${needed} more feedback to post another message`;
+        const needed = Math.abs(chaptersRemaining) + 1;
+        return `📝 Need ${needed} more feedback to post another chapter`;
     }
 }
 
@@ -377,29 +376,24 @@ async function processFeedbackContribution(userId) {
     
     const user = getUserData(userId);
     user.totalFeedbackAllTime += 1;
-    const newBalance = addDinars(userId, DINARS_PER_FEEDBACK);
     
     await saveData();
     
     return {
         newCount,
         totalAllTime: user.totalFeedbackAllTime,
-        newBalance,
         requirementMet: newCount >= MONTHLY_FEEDBACK_REQUIREMENT
     };
 }
 
 function createFeedbackEmbed(user, feedbackData) {
     return new EmbedBuilder()
-        .setTitle('Contribution Duly Recorded ☝️')
+        .setTitle('Feedback Credit Duly Recorded ☝️')
         .setDescription(`Your generous offering of feedback has been noted with appreciation, ${user}. Such dedication to your fellow scribes is most commendable indeed.`)
         .addFields(
-            { name: 'This Month', value: `${feedbackData.newCount} contribution${feedbackData.newCount !== 1 ? 's' : ''}`, inline: true },
+            { name: 'This Month', value: `${feedbackData.newCount} credit${feedbackData.newCount !== 1 ? 's' : ''}`, inline: true },
             { name: 'Monthly Requirement', value: feedbackData.requirementMet ? '✅ Graciously fulfilled' : '📝 Still in progress', inline: true },
-            { name: 'All Time Total', value: `${feedbackData.totalAllTime}`, inline: true },
-            { name: 'Dinars Earned', value: `💰 +${DINARS_PER_FEEDBACK} dinars`, inline: true },
-            { name: 'Current Balance', value: `💰 ${feedbackData.newBalance} dinars`, inline: true },
-            { name: 'Bookshelf Access', value: getBookshelfAccessStatus(user.id), inline: true }
+            { name: 'All Time Total', value: `${feedbackData.totalAllTime} credit${feedbackData.totalAllTime !== 1 ? 's' : ''}`, inline: true }
         )
         .setColor(feedbackData.requirementMet ? 0x00AA55 : 0x5865F2);
 }
@@ -429,49 +423,12 @@ const commands = [
     
     new SlashCommandBuilder()
         .setName('feedback_status')
-        .setDescription('Check monthly contribution status')
+        .setDescription('Check monthly feedback status')
         .addUserOption(option => option.setName('user').setDescription('User to check (optional)').setRequired(false)),
     
     new SlashCommandBuilder()
-        .setName('feedback_add')
-        .setDescription('Add feedback points to a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to add points to').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of points to add (default: 1)').setRequired(false)),
-    
-    new SlashCommandBuilder()
-        .setName('feedback_remove')
-        .setDescription('Remove feedback points from a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to remove points from').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of points to remove (default: 1)').setRequired(false)),
-    
-    new SlashCommandBuilder()
-        .setName('feedback_reset')
-        .setDescription('Reset member\'s entire record to zero (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to reset').setRequired(true)),
-    
-    new SlashCommandBuilder()
-        .setName('dinars_add')
-        .setDescription('Add dinars to a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to add dinars to').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of dinars to add').setRequired(true)),
-    
-    new SlashCommandBuilder()
-        .setName('dinars_remove')
-        .setDescription('Remove dinars from a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to remove dinars from').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of dinars to remove').setRequired(true)),
-    
-    new SlashCommandBuilder()
-        .setName('help')
-        .setDescription('Display command guide'),
-    
-    new SlashCommandBuilder()
-        .setName('stats')
-        .setDescription('View detailed server statistics (Staff only)'),
-    
-    new SlashCommandBuilder()
         .setName('balance')
-        .setDescription('Check your dinar balance and bookshelf eligibility')
+        .setDescription('Check your feedback credits and bookshelf eligibility')
         .addUserOption(option => option.setName('user').setDescription('User to check (optional)').setRequired(false)),
     
     new SlashCommandBuilder()
@@ -482,7 +439,40 @@ const commands = [
         .setName('buy')
         .setDescription('Purchase an item from the store')
         .addStringOption(option => option.setName('item').setDescription('Item to purchase').setRequired(true)
-            .addChoices({ name: 'Bookshelf Access (200 dinars)', value: 'shelf' })),
+            .addChoices({ name: 'Bookshelf Access (2 credits)', value: 'shelf' })),
+    
+    new SlashCommandBuilder()
+        .setName('hall_of_fame')
+        .setDescription('View the most dedicated contributors in our literary realm'),
+    
+    new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('Display essential commands guide'),
+    
+    new SlashCommandBuilder()
+        .setName('commands')
+        .setDescription('Display all available commands'),
+    
+    new SlashCommandBuilder()
+        .setName('feedback_add')
+        .setDescription('Add feedback credits to a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to add credits to').setRequired(true))
+        .addIntegerOption(option => option.setName('amount').setDescription('Number of credits to add (default: 1)').setRequired(false)),
+    
+    new SlashCommandBuilder()
+        .setName('feedback_remove')
+        .setDescription('Remove feedback credits from a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to remove credits from').setRequired(true))
+        .addIntegerOption(option => option.setName('amount').setDescription('Number of credits to remove (default: 1)').setRequired(false)),
+    
+    new SlashCommandBuilder()
+        .setName('feedback_reset')
+        .setDescription('Reset member\'s entire record to zero (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to reset').setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('stats')
+        .setDescription('View detailed server statistics (Staff only)'),
     
     new SlashCommandBuilder()
         .setName('setup_bookshelf')
@@ -512,33 +502,18 @@ client.on('guildMemberAdd', async (member) => {
     const welcomeChannel = member.guild.channels.cache.find(ch => ch.name === 'welcome');
     if (welcomeChannel) {
         const welcomeEmbed = new EmbedBuilder()
-            .setTitle(`Behold! A New Scribe Joins Our Esteemed Halls ☝️`)
-            .setDescription(`@everyone\n\nMy lords and ladies, I have the distinct pleasure of announcing the arrival of ${member.displayName} to our distinguished literary realm. Word has reached my ears that they seek to test their mettle amongst writers of considerable reputation.\n\nAs your humble servant, I do hope you shall extend the customary courtesies befitting our station. Perhaps a warm greeting, a gentle word of guidance, or—dare I suggest—an invitation to partake in the noble art of critique exchange.\n\nRemember, dear writers, that today's newcomer may well become tomorrow's most celebrated wordsmith. I have witnessed many a humble quill rise to greatness through the nurturing embrace of this very community.`)
+            .setTitle(`Welcome to Type&Draft, ${member.displayName}! ☝️`)
+            .setDescription(`Greetings, esteemed writer! I have the distinct pleasure of welcoming you to our distinguished literary community. To begin your journey amongst our fellow scribes, I humbly suggest you attend to these essential matters:`)
             .addFields(
-                { name: 'A Most Sage Counsel', value: `${member.displayName}, you would do exceedingly well to acquaint yourself with our customs forthwith. Visit the introductions channel, peruse our rules with the attention they deserve, and perhaps—when you feel sufficiently prepared—venture forth to offer or seek the invaluable gift of feedback.`, inline: false },
-                { name: 'The Path to Literary Standing', value: `Know this: in Type&Draft, we measure worth not by birth nor station, but by one\'s willingness to nurture the craft of fellow scribes. Each month, those of Level 5 standing must contribute at least ${MONTHLY_FEEDBACK_REQUIREMENT} offerings of feedback to maintain their good name.`, inline: false }
+                { name: '📜 Essential Reading', value: '• Review our <#rules> to understand our community standards\n• Peruse the <#server-guide> to learn how our realm operates', inline: false },
+                { name: '🎭 Getting Started', value: '• Introduce yourself in <#introductions> with your lucky number and favorite animal\n• Select your roles in <#reaction-roles> to personalize your experience', inline: false },
+                { name: '✍️ Your Literary Path', value: `Once settled, you may begin contributing feedback to fellow writers. Those who reach Level 5 standing must provide at least ${MONTHLY_FEEDBACK_REQUIREMENT} feedback credits monthly to maintain their good name in our community.`, inline: false }
             )
-            .setColor(0xFFD700)
+            .setColor(0x5865F2)
             .setThumbnail(member.user.displayAvatarURL())
-            .setFooter({ text: 'Your devoted servant in all matters literary and administrative' });
+            .setFooter({ text: 'Your humble servant in all matters literary and administrative' });
         
         await sendTemporaryMessage(welcomeChannel, { embeds: [welcomeEmbed] });
-    }
-    
-    // Introduction channel instructions
-    const introChannel = member.guild.channels.cache.find(ch => ch.name === 'introductions');
-    if (introChannel) {
-        const embed = new EmbedBuilder()
-            .setTitle(`A New Writer Graces Type&Draft ☝️`)
-            .setDescription(`Welcome, ${member.displayName}. I do hope your quill shall prove as sharp as your wit. Please, do acquaint yourself with our modest customs and introduce yourself with your **lucky number** and **favorite animal** - small tokens that help us know our fellow scribes better.`)
-            .addFields(
-                { name: 'Your Path Forward', value: '• Peruse the rules with utmost care\n• Select your roles in reaction-roles\n• Introduce yourself here with the required particulars\n• Begin your literary journey amongst kindred spirits', inline: false },
-                { name: 'A Gentle Counsel', value: `Remember, dear writer, that in Type&Draft we flourish through the sharing of wisdom. Each month, you must offer at least ${MONTHLY_FEEDBACK_REQUIREMENT} contributions of feedback to remain in good standing once you reach Level 5.`, inline: false }
-            )
-            .setColor(0x2F3136)
-            .setThumbnail(member.user.displayAvatarURL());
-        
-        await sendTemporaryMessage(introChannel, { embeds: [embed] });
     }
 });
 
@@ -585,9 +560,9 @@ async function handleBookshelfMessage(message) {
         return true;
     }
     
-    if (!canPostInBookshelf(userId) || !hasShelfRole(message.member)) {
+    if (!canPostInBookshelf(userId, message.member)) {
         await message.delete();
-        await sendBookshelfAccessDeniedDM(message.author, 'no_access', user);
+        await sendBookshelfAccessDeniedDM(message.author, 'no_access', user, message.member);
         return true;
     }
     
@@ -606,7 +581,7 @@ async function handleBookshelfMessage(message) {
     return true;
 }
 
-async function sendBookshelfAccessDeniedDM(author, reason, user = null) {
+async function sendBookshelfAccessDeniedDM(author, reason, user = null, member = null) {
     const embeds = {
         thread_owner: new EmbedBuilder()
             .setTitle('Thread Owner Only ☝️')
@@ -619,20 +594,21 @@ async function sendBookshelfAccessDeniedDM(author, reason, user = null) {
         
         no_access: new EmbedBuilder()
             .setTitle('Bookshelf Access Required ☝️')
-            .setDescription(`Dear ${author}, I regret to inform you that posting in the bookshelf forum requires both dedication and investment in our literary community.`)
+            .setDescription(`Dear ${author}, I regret to inform you that posting in the bookshelf forum requires specific roles and dedication to our literary community.`)
             .addFields(
-                { name: 'Requirements to Post', value: `• **Minimum ${MINIMUM_FEEDBACK_FOR_SHELF} feedback contributions** (You have: ${user.totalFeedbackAllTime})\n• **Purchase bookshelf access** from the store for ${STORE_ITEMS.shelf.price} dinars\n• **Current balance:** ${user.dinars} dinars`, inline: false },
-                { name: 'How to Gain Access', value: '1. Give feedback to fellow writers and log it with `/feedback`\n2. Earn 100 dinars per logged feedback\n3. Purchase "Bookshelf Access" from `/store` for 200 dinars\n4. Return here to share your literary works', inline: false }
+                { name: 'Requirements to Post', value: `• **Minimum ${MINIMUM_FEEDBACK_FOR_SHELF} feedback credits** (You have: ${user?.totalFeedbackAllTime || 0})\n• **Shelf Owner role** (purchasable with 2 credits)\n• **reader role** (assigned by staff)\n• **Both roles required** to create or post in threads`, inline: false },
+                { name: 'Your Current Status', value: `• Credits: ${user?.totalFeedbackAllTime || 0}\n• Shelf Owner: ${member && hasShelfRole(member) ? '✅' : '❌'}\n• reader role: ${member && hasReaderRole(member) ? '✅' : '❌'}`, inline: false },
+                { name: 'How to Gain Access', value: '1. Give feedback to fellow writers and log it with `/feedback`\n2. Purchase "Shelf Owner" role from `/store` for 2 credits\n3. Request reader role assignment from staff\n4. Return here to share your literary works', inline: false }
             )
             .setColor(0xFF9900),
         
         no_credits: new EmbedBuilder()
-            .setTitle('Insufficient Message Credits ☝️')
-            .setDescription(`Dear ${author}, while you possess bookshelf access, each message beyond your first requires additional dedication to our community through feedback contributions.`)
+            .setTitle('Insufficient Chapter Credits ☝️')
+            .setDescription(`Dear ${author}, while you possess the necessary roles, each chapter beyond your first requires additional feedback credits.`)
             .addFields(
-                { name: 'Your Bookshelf Activity', value: `• **Messages posted:** ${user.bookshelfPosts}\n• **Total feedback given:** ${user.totalFeedbackAllTime}\n• **Additional feedback needed:** ${Math.abs(user.totalFeedbackAllTime - user.bookshelfPosts - 1) + 1}`, inline: false },
-                { name: 'How the System Works', value: '• **First message ever:** Free after purchasing shelf access\n• **Each additional message:** Requires 1 more total feedback contribution\n• **Example:** 5 total feedback = 4 messages allowed (1 free + 3 earned)', inline: false },
-                { name: 'How to Earn More Messages', value: `Give feedback to fellow writers in the forums and log it with \`/feedback\``, inline: false }
+                { name: 'Your Bookshelf Activity', value: `• **Chapters posted:** ${user?.bookshelfPosts || 0}\n• **Total feedback given:** ${user?.totalFeedbackAllTime || 0}\n• **Additional feedback needed:** ${Math.abs((user?.totalFeedbackAllTime || 0) - (user?.bookshelfPosts || 0) - 1) + 1}`, inline: false },
+                { name: 'How the System Works', value: '• **First chapter ever:** Free after gaining access\n• **Each additional chapter:** Requires 1 more total feedback credit\n• **Example:** 5 total feedback = 4 chapters allowed (1 free + 3 earned)', inline: false },
+                { name: 'How to Earn More Credits', value: `Give feedback to fellow writers in the forums and log it with \`/feedback\``, inline: false }
             )
             .setColor(0xFF9900)
     };
@@ -651,13 +627,13 @@ async function sendBookshelfMilestone(message, user) {
     
     if (isFirstMessage || user.bookshelfPosts % 5 === 0) {
         const embed = new EmbedBuilder()
-            .setTitle(isFirstMessage ? 'First Message Posted ☝️' : 'Milestone Reached ☝️')
+            .setTitle(isFirstMessage ? 'First Chapter Posted ☝️' : 'Writing Milestone Reached ☝️')
             .setDescription(isFirstMessage ? 
                 `Your first literary contribution has been graciously accepted into the bookshelf forum, ${message.author}. May it inspire meaningful discussions among our community.` :
-                `Congratulations, ${message.author}! You have reached ${user.bookshelfPosts} messages in our literary forum. Your dedication to our community is most commendable.`)
+                `Congratulations, ${message.author}! You have reached ${user.bookshelfPosts} chapter${user.bookshelfPosts !== 1 ? 's' : ''} in our literary forum. Your dedication to our community is most commendable.`)
             .addFields(
-                { name: 'Messages Posted', value: `${user.bookshelfPosts}`, inline: true },
-                { name: 'Messages Remaining', value: remainingPosts > 0 ? `${remainingPosts}` : 'Give more feedback to post again', inline: true },
+                { name: 'Chapters Posted', value: `${user.bookshelfPosts}`, inline: true },
+                { name: 'Chapters Remaining', value: remainingPosts > 0 ? `${remainingPosts}` : 'Give more feedback to post again', inline: true },
                 { name: 'Total Feedback Given', value: `${user.totalFeedbackAllTime}`, inline: true }
             )
             .setColor(0x00AA55);
@@ -717,9 +693,9 @@ async function handleCommand(message) {
             feedback_add: () => handleFeedbackAddCommand(message, args),
             feedback_remove: () => handleFeedbackRemoveCommand(message, args),
             feedback_reset: () => handleFeedbackResetCommand(message),
-            dinars_add: () => handleDinarsAddCommand(message, args),
-            dinars_remove: () => handleDinarsRemoveCommand(message, args),
             help: () => handleHelpCommand(message),
+            commands: () => handleCommandsCommand(message),
+            hall_of_fame: () => handleHallOfFameCommand(message),
             stats: () => handleStatsCommand(message),
             balance: () => handleBalanceCommand(message),
             store: () => handleStoreCommand(message),
@@ -744,9 +720,9 @@ async function handleSlashCommand(interaction) {
         feedback_add: () => handleFeedbackAddSlashCommand(interaction),
         feedback_remove: () => handleFeedbackRemoveSlashCommand(interaction),
         feedback_reset: () => handleFeedbackResetSlashCommand(interaction),
-        dinars_add: () => handleDinarsAddSlashCommand(interaction),
-        dinars_remove: () => handleDinarsRemoveSlashCommand(interaction),
         help: () => handleHelpSlashCommand(interaction),
+        commands: () => handleCommandsSlashCommand(interaction),
+        hall_of_fame: () => handleHallOfFameSlashCommand(interaction),
         stats: () => handleStatsSlashCommand(interaction),
         balance: () => handleBalanceSlashCommand(interaction),
         store: () => handleStoreSlashCommand(interaction),
@@ -776,7 +752,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     if (!isInAllowedFeedbackThread(channel)) {
         const embed = new EmbedBuilder()
             .setTitle('Incorrect Thread ☝️')
-            .setDescription('I regret to inform you that feedback contributions may only be logged within the designated literary threads of our community.')
+            .setDescription('I regret to inform you that feedback credits may only be logged within the designated literary threads of our community.')
             .addFields({
                 name: 'Permitted Threads',
                 value: '• **bookshelf-feedback** forum - For recording feedback given to fellow writers\n• **bookshelf-discussion** forum - For discussions about literary critiques',
@@ -794,7 +770,26 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     if (!hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
             .setTitle('Insufficient Standing')
-            .setDescription('I fear you must first attain Level 5 standing within our community before you may log feedback contributions, dear writer. Continue your literary journey and return when you have gained the necessary experience.')
+            .setDescription('I fear you must first attain Level 5 standing within our community before you may log feedback credits, dear writer. Continue your literary journey and return when you have gained the necessary experience.')
+            .setColor(0xFF9900);
+        
+        if (isSlash) {
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
+        }
+    }
+    
+    // Check if this is the user's own thread (prevent self-feedback logging)
+    if (channel.isThread() && channel.ownerId === user.id) {
+        const embed = new EmbedBuilder()
+            .setTitle('Cannot Log Own Thread Feedback ☝️')
+            .setDescription('I regret to inform you that you cannot log feedback credits on your own thread, dear writer. Feedback credits must be earned by providing critique to fellow writers, not for receiving it.')
+            .addFields({
+                name: 'How to Earn Credits',
+                value: '• Visit other writers\' threads in the feedback forums\n• Provide thoughtful critique and feedback\n• Use `/feedback` to log your contribution\n• Credits are earned by giving feedback, not receiving it',
+                inline: false
+            })
             .setColor(0xFF9900);
         
         if (isSlash) {
@@ -813,7 +808,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
             .setDescription('I regret that I could not locate a recent message from you in this thread, dear writer. Please ensure you have posted your feedback before attempting to log it.')
             .addFields({
                 name: 'How to Use This Command',
-                value: '1. Post your feedback/critique in this thread\n2. Use `/feedback` or `!feedback` to log your contribution\n3. This logs your most recent message and awards dinars',
+                value: '1. Post your feedback/critique in this thread\n2. Use `/feedback` or `!feedback` to log your most recent message\n3. This awards you feedback credits and dinars',
                 inline: false
             })
             .setColor(0xFF9900);
@@ -829,7 +824,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     if (hasUserLoggedFeedbackForMessage(latestMessage.id, user.id)) {
         const embed = new EmbedBuilder()
             .setTitle('Feedback Already Logged ☝️')
-            .setDescription('I regret to inform you that you have already logged feedback for this particular message, dear writer. Each contribution may only be counted once.')
+            .setDescription('I regret to inform you that you have already logged feedback credits for this particular message, dear writer. Each feedback message may only be counted once.')
             .addFields({
                 name: 'To Log More Feedback',
                 value: 'Post a new feedback message and then use the feedback command again.',
@@ -880,13 +875,110 @@ function createFeedbackStatusEmbed(user, requester) {
     
     return new EmbedBuilder()
         .setTitle(`Monthly Standing - ${user.displayName}`)
-        .setDescription(`Allow me to present the current state of ${user.id === requester.id ? 'your' : `${user.displayName}'s`} contributions to our literary community.`)
+        .setDescription(`Allow me to present the current state of ${user.id === requester.id ? 'your' : `${user.displayName}'s`} feedback credits to our literary community.`)
         .addFields(
-            { name: 'This Month', value: `${monthlyCount} contribution${monthlyCount !== 1 ? 's' : ''}`, inline: true },
-            { name: 'Requirement Status', value: monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅ Monthly requirement graciously fulfilled' : '📝 Monthly contribution still awaited', inline: true },
-            { name: 'All Time Contributions', value: `${totalAllTime}`, inline: true }
+            { name: 'This Month', value: `${monthlyCount} credit${monthlyCount !== 1 ? 's' : ''}`, inline: true },
+            { name: 'Requirement Status', value: monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅ Monthly requirement graciously fulfilled' : '📝 Monthly credits still awaited', inline: true },
+            { name: 'All Time Credits', value: `${totalAllTime}`, inline: true }
         )
         .setColor(monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 0x00AA55 : 0xFF9900);
+}
+
+// ===== HALL OF FAME COMMAND =====
+async function handleHallOfFameCommand(message) {
+    const embed = await createHallOfFameEmbed(message.guild);
+    await replyTemporaryMessage(message, { embeds: [embed] });
+}
+
+async function handleHallOfFameSlashCommand(interaction) {
+    const embed = await createHallOfFameEmbed(interaction.guild);
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function createHallOfFameEmbed(guild) {
+    // Get all users with feedback credits and sort them
+    const usersWithCredits = Object.entries(userData)
+        .filter(([userId, data]) => data.totalFeedbackAllTime > 0)
+        .sort(([, a], [, b]) => b.totalFeedbackAllTime - a.totalFeedbackAllTime)
+        .slice(0, 10); // Top 10
+    
+    if (usersWithCredits.length === 0) {
+        return new EmbedBuilder()
+            .setTitle('Hall of Fame ☝️')
+            .setDescription('It appears no writers have yet contributed feedback to our literary realm. Perhaps it is time to begin sharing wisdom with fellow scribes?')
+            .setColor(0x2F3136);
+    }
+    
+    let leaderboard = '';
+    for (let i = 0; i < usersWithCredits.length; i++) {
+        const [userId, data] = usersWithCredits[i];
+        try {
+            const member = await guild.members.fetch(userId);
+            const rank = i + 1;
+            const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+            leaderboard += `${medal} **${member.displayName}** - ${data.totalFeedbackAllTime} credit${data.totalFeedbackAllTime !== 1 ? 's' : ''}\n`;
+        } catch (error) {
+            // Skip users who are no longer in the guild
+            continue;
+        }
+    }
+    
+    return new EmbedBuilder()
+        .setTitle('Hall of Fame ☝️')
+        .setDescription('Behold, the most dedicated contributors in our distinguished literary community, honored for their generous sharing of wisdom through thoughtful critique.')
+        .addFields({
+            name: 'Most Dedicated Contributors',
+            value: leaderboard || 'No qualifying writers found.',
+            inline: false
+        })
+        .setColor(0xFFD700)
+        .setFooter({ text: 'Recognition reflects dedication to nurturing fellow scribes through meaningful feedback' });
+}
+
+// ===== COMMANDS LIST =====
+async function handleCommandsCommand(message) {
+    const embed = createAllCommandsEmbed();
+    await replyTemporaryMessage(message, { embeds: [embed] });
+}
+
+async function handleCommandsSlashCommand(interaction) {
+    const embed = createAllCommandsEmbed();
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+function createAllCommandsEmbed() {
+    return new EmbedBuilder()
+        .setTitle('Complete Commands Directory ☝️')
+        .setDescription('Your comprehensive guide to all available commands in our literary realm, organized by purpose and authority level.')
+        .addFields(
+            { 
+                name: '📝 Feedback System (Level 5 Required)', 
+                value: '`/feedback` or `!feedback` - Log your most recent feedback message\n`/feedback_status [user]` - Check monthly feedback status', 
+                inline: false 
+            },
+            { 
+                name: '💰 Credits & Recognition', 
+                value: '`/balance [user]` - Check feedback credits and bookshelf status\n`/store` - View available items for purchase\n`/buy [item]` - Purchase items from the store\n`/hall_of_fame` - View leaderboard of top contributors', 
+                inline: false 
+            },
+            { 
+                name: '📚 Information & Help', 
+                value: '`/help` - Essential commands guide\n`/commands` - This complete commands list', 
+                inline: false 
+            },
+            { 
+                name: '👑 Staff: Feedback Management', 
+                value: '`/feedback_add` - Add feedback credits to a member\n`/feedback_remove` - Remove feedback credits from a member\n`/feedback_reset` - Complete account reset', 
+                inline: false 
+            },
+            { 
+                name: '👑 Staff: Server Administration', 
+                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Configure bookshelf forum permissions', 
+                inline: false 
+            }
+        )
+        .setColor(0x2F3136)
+        .setFooter({ text: 'Your humble servant in all matters literary and administrative' });
 }
 
 // ===== STAFF COMMANDS =====
@@ -925,10 +1017,9 @@ async function addFeedbackToUser(userId, amount) {
     
     const userRecord = getUserData(userId);
     userRecord.totalFeedbackAllTime += amount;
-    addDinars(userId, amount * DINARS_PER_FEEDBACK);
     
     await saveData();
-    return { currentCount, newCount, newBalance: userRecord.dinars };
+    return { currentCount, newCount };
 }
 
 function createFeedbackModificationEmbed(user, amount, action) {
@@ -936,16 +1027,12 @@ function createFeedbackModificationEmbed(user, amount, action) {
     const monthlyCount = getUserMonthlyFeedback(user.id);
     
     return new EmbedBuilder()
-        .setTitle(`Feedback Contributions ${action === 'added' ? 'Enhanced' : 'Adjusted'} ☝️`)
+        .setTitle(`Feedback Credits ${action === 'added' ? 'Enhanced' : 'Adjusted'} ☝️`)
         .setDescription(`I have ${action === 'added' ? 'graciously added to' : 'reduced'} ${user}'s feedback record, as ${action === 'added' ? 'befits their continued dedication to our literary community' : 'you have instructed, though I confess it pains me to diminish any writer\'s standing'}.`)
         .addFields(
             { name: 'Monthly Count', value: `${monthlyCount}`, inline: true },
             { name: 'All-Time Total', value: `${userRecord.totalFeedbackAllTime}`, inline: true },
-            { name: `Points ${action === 'added' ? 'Added' : 'Removed'}`, value: `${amount}`, inline: true },
-            ...(action === 'added' ? [
-                { name: 'Dinars Awarded', value: `💰 +${amount * DINARS_PER_FEEDBACK} dinars`, inline: true },
-                { name: 'New Balance', value: `💰 ${userRecord.dinars} dinars`, inline: true }
-            ] : [])
+            { name: `Credits ${action === 'added' ? 'Added' : 'Removed'}`, value: `${amount}`, inline: true }
         )
         .setColor(action === 'added' ? 0x00AA55 : 0xFF6B6B);
 }
@@ -1018,17 +1105,15 @@ async function performCompleteReset(userId, guild) {
     const previousCount = getUserMonthlyFeedback(userId);
     const userRecord = getUserData(userId);
     const previousAllTime = userRecord.totalFeedbackAllTime;
-    const previousDinars = userRecord.dinars;
     const hadShelfAccess = userRecord.purchases.includes('shelf');
     
     // COMPLETE RESET
     setUserMonthlyFeedback(userId, 0);
     userRecord.totalFeedbackAllTime = 0;
-    userRecord.dinars = 0;
     userRecord.bookshelfPosts = 0;
     userRecord.purchases = userRecord.purchases.filter(item => item !== 'shelf');
     
-    // Remove roles
+    // Remove Shelf Owner role (reader role is managed by staff separately)
     const targetMember = guild.members.cache.get(userId);
     if (targetMember) {
         await removeUserRoles(targetMember, guild);
@@ -1042,14 +1127,14 @@ async function performCompleteReset(userId, guild) {
     return {
         previousCount,
         previousAllTime,
-        previousDinars,
         hadShelfAccess,
         closedThreads
     };
 }
 
 async function removeUserRoles(member, guild) {
-    const rolesToRemove = ['Shelf Owner', 'reader'];
+    // Only remove Shelf Owner role - reader role is managed by staff
+    const rolesToRemove = ['Shelf Owner'];
     
     for (const roleName of rolesToRemove) {
         const role = guild.roles.cache.find(r => r.name === roleName);
@@ -1067,14 +1152,14 @@ async function removeUserRoles(member, guild) {
 function createResetEmbed(user, resetData) {
     return new EmbedBuilder()
         .setTitle('Complete Literary Record Reset ☝️')
-        .setDescription(`${user}'s entire literary standing has been reset to a clean slate, as you have decreed. All achievements, wealth, and privileges have been stripped away. Perhaps this complete fresh beginning shall inspire true dedication.`)
+        .setDescription(`${user}'s entire literary standing has been reset to a clean slate, as you have decreed. All achievements and privileges have been stripped away. Perhaps this complete fresh beginning shall inspire true dedication.`)
         .addFields(
             { name: 'Previous Monthly Count', value: `${resetData.previousCount}`, inline: true },
             { name: 'Previous All-Time Total', value: `${resetData.previousAllTime}`, inline: true },
-            { name: 'Previous Balance', value: `💰 ${resetData.previousDinars} dinars`, inline: true },
-            { name: 'Current Status', value: '**Everything reset to zero**', inline: false },
-            { name: 'Bookshelf Access', value: resetData.hadShelfAccess ? '📚 Access completely revoked' : '📚 No access', inline: true },
-            { name: 'Threads Closed', value: `🔒 ${resetData.closedThreads} thread${resetData.closedThreads !== 1 ? 's' : ''} archived and locked`, inline: true }
+            { name: 'Current Status', value: '**Everything reset to zero**', inline: true },
+            { name: 'Bookshelf Access', value: resetData.hadShelfAccess ? '📚 Shelf Owner role removed' : '📚 No previous access', inline: true },
+            { name: 'Threads Closed', value: `🔒 ${resetData.closedThreads} thread${resetData.closedThreads !== 1 ? 's' : ''} archived and locked`, inline: true },
+            { name: 'Action Taken', value: 'Complete reset: monthly count, all-time total, purchases cleared, Shelf Owner role removed, message credits reset, and all threads closed', inline: false }
         )
         .setColor(0xFF6B6B);
 }
@@ -1200,12 +1285,12 @@ function createBalanceEmbed(user) {
     
     return new EmbedBuilder()
         .setTitle(`${user.displayName}'s Literary Standing ☝️`)
-        .setDescription(`Allow me to present the current economic and literary standing of this distinguished writer.`)
+        .setDescription(`Allow me to present the current literary standing and achievements of this distinguished writer.`)
         .addFields(
-            { name: 'Current Balance', value: `💰 ${userRecord.dinars} dinars`, inline: true },
-            { name: 'Lifetime Feedback', value: `📝 ${userRecord.totalFeedbackAllTime} contribution${userRecord.totalFeedbackAllTime !== 1 ? 's' : ''}`, inline: true },
-            { name: 'Bookshelf Access', value: getBookshelfAccessStatus(userId), inline: true },
-            { name: 'Message Credits', value: getPostCreditStatus(userId), inline: false },
+            { name: 'Feedback Credits', value: `📝 ${userRecord.totalFeedbackAllTime} credit${userRecord.totalFeedbackAllTime !== 1 ? 's' : ''}`, inline: true },
+            { name: 'Monthly Progress', value: `${getUserMonthlyFeedback(userId)}/${MONTHLY_FEEDBACK_REQUIREMENT} this month`, inline: true },
+            { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId), inline: true },
+            { name: 'Chapter Credits', value: getPostCreditStatus(userId), inline: false },
             { name: 'Purchases Made', value: userRecord.purchases.length > 0 ? userRecord.purchases.map(item => `• ${STORE_ITEMS[item]?.name || item}`).join('\n') : 'None yet', inline: false }
         )
         .setColor(canPostInBookshelf(userId) ? 0x00AA55 : 0xFF9900);
@@ -1224,13 +1309,14 @@ async function handleStoreSlashCommand(interaction) {
 function createStoreEmbed() {
     return new EmbedBuilder()
         .setTitle('Type&Draft Literary Emporium ☝️')
-        .setDescription('Welcome to our humble establishment, where dedication to the craft is rewarded with tangible benefits. Examine our current offerings, crafted with the utmost care for our literary community.')
+        .setDescription('Welcome to our humble establishment, where dedication to the craft is rewarded with privileges. Examine our current offerings, crafted with the utmost care for our literary community.')
         .addFields(
-            { name: '📚 Bookshelf Access', value: `Grants you the ability to post messages in the #bookshelf forum\n**Price:** ${STORE_ITEMS.shelf.price} dinars\n**Requirements:** ${MINIMUM_FEEDBACK_FOR_SHELF}+ feedback contributions\n**Roles granted:** Shelf Owner + reader`, inline: false },
-            { name: 'How to Earn Dinars', value: `• **Provide feedback** to fellow writers and log it with \`/feedback\`\n• **Earn ${DINARS_PER_FEEDBACK} dinars** per logged feedback contribution\n• **Build your reputation** through meaningful engagement`, inline: false }
+            { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in #bookshelf\n**Price:** ${STORE_ITEMS.shelf.price} feedback credits\n**Requirements:** ${MINIMUM_FEEDBACK_FOR_SHELF}+ total feedback credits\n**Note:** reader role must be assigned by staff separately`, inline: false },
+            { name: 'How to Earn Credits', value: `• **Provide feedback** to fellow writers in the designated forums\n• **Log contributions** with \`/feedback\` to earn credits\n• **Build your reputation** through meaningful engagement`, inline: false },
+            { name: 'Important Notice', value: 'To post in #bookshelf, you need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned). Contact staff for reader role assignment after purchase.', inline: false }
         )
         .setColor(0x2F3136)
-        .setFooter({ text: 'All prices are final. Purchases support our thriving literary community.' });
+        .setFooter({ text: 'All purchases support our thriving literary community.' });
 }
 
 async function handleBuyCommand(message, args) {
@@ -1268,17 +1354,17 @@ async function processPurchase(userId, itemKey, member, guild) {
         };
     }
     
-    if (userRecord.dinars < item.price) {
+    if (userRecord.totalFeedbackAllTime < item.price) {
         return {
             success: false,
-            reason: 'insufficient_funds',
-            needed: item.price - userRecord.dinars,
-            current: userRecord.dinars,
+            reason: 'insufficient_credits',
+            needed: item.price - userRecord.totalFeedbackAllTime,
+            current: userRecord.totalFeedbackAllTime,
             price: item.price
         };
     }
     
-    if (spendDinars(userId, item.price)) {
+    if (spendCredits(userId, item.price)) {
         userRecord.purchases.push(itemKey);
         
         if (item.role) {
@@ -1286,14 +1372,15 @@ async function processPurchase(userId, itemKey, member, guild) {
         }
         
         await saveData();
-        return { success: true, newBalance: userRecord.dinars };
+        return { success: true, creditsUsed: item.price };
     }
     
     return { success: false, reason: 'unknown_error' };
 }
 
 async function assignPurchaseRoles(member, guild, itemKey) {
-    const roleNames = itemKey === 'shelf' ? ['Shelf Owner', 'reader'] : [STORE_ITEMS[itemKey].role];
+    // Only assign Shelf Owner role - reader role must be assigned by staff
+    const roleNames = [STORE_ITEMS[itemKey].role];
     
     for (const roleName of roleNames) {
         if (!roleName) continue;
@@ -1301,7 +1388,7 @@ async function assignPurchaseRoles(member, guild, itemKey) {
         let role = guild.roles.cache.find(r => r.name === roleName);
         if (!role) {
             try {
-                const roleColor = roleName === 'Shelf Owner' ? 0x8B4513 : 0x5865F2;
+                const roleColor = 0x8B4513; // Brown color for Shelf Owner
                 role = await guild.roles.create({
                     name: roleName,
                     color: roleColor,
@@ -1334,22 +1421,22 @@ function createPurchaseResultEmbed(user, itemKey, result) {
                 .setColor(0xFF9900),
             
             insufficient_feedback: new EmbedBuilder()
-                .setTitle('Insufficient Literary Contributions')
-                .setDescription(`I regret to inform you that bookshelf access requires a minimum of **${MINIMUM_FEEDBACK_FOR_SHELF} feedback contributions**. You currently have ${result.current}.`)
+                .setTitle('Insufficient Literary Credits')
+                .setDescription(`I regret to inform you that bookshelf access requires a minimum of **${MINIMUM_FEEDBACK_FOR_SHELF} feedback credits**. You currently have ${result.current}.`)
                 .addFields({
                     name: 'How to Qualify',
-                    value: `• Provide feedback to fellow writers\n• Log each contribution with \`/feedback\`\n• Return when you have ${result.needed} more contribution${result.needed === 1 ? '' : 's'}`,
+                    value: `• Provide feedback to fellow writers\n• Log each credit with \`/feedback\`\n• Return when you have ${result.needed} more credit${result.needed === 1 ? '' : 's'}`,
                     inline: false
                 })
                 .setColor(0xFF6B6B),
             
-            insufficient_funds: new EmbedBuilder()
-                .setTitle('Insufficient Funds')
-                .setDescription(`I fear your current balance of ${result.current} dinars is insufficient for this purchase.`)
+            insufficient_credits: new EmbedBuilder()
+                .setTitle('Insufficient Credits')
+                .setDescription(`I fear your current total of ${result.current} credits is insufficient for this purchase.`)
                 .addFields({
-                    name: 'Required Amount', value: `${result.price} dinars`, inline: true
+                    name: 'Required Amount', value: `${result.price} credits`, inline: true
                 }, {
-                    name: 'Still Needed', value: `${result.needed} dinars (${Math.ceil(result.needed / DINARS_PER_FEEDBACK)} more feedback contributions)`, inline: true
+                    name: 'Still Needed', value: `${result.needed} more feedback credit${result.needed === 1 ? '' : 's'}`, inline: true
                 })
                 .setColor(0xFF6B6B)
         };
@@ -1362,9 +1449,10 @@ function createPurchaseResultEmbed(user, itemKey, result) {
         .setDescription(`Congratulations, ${user}! Your acquisition of ${item.name} has been processed with the utmost care.`)
         .addFields(
             { name: 'Item Purchased', value: `${item.emoji} ${item.name}`, inline: true },
-            { name: 'Price Paid', value: `💰 ${item.price} dinars`, inline: true },
-            { name: 'Remaining Balance', value: `💰 ${result.newBalance} dinars`, inline: true },
-            { name: 'New Privileges', value: itemKey === 'shelf' ? '📚 You may now post messages in the #bookshelf forum!\n📝 First message is free, then 1 feedback = 1 additional message\n🎭 Roles assigned: Shelf Owner + reader' : item.description, inline: false }
+            { name: 'Credits Used', value: `📝 ${result.creditsUsed} credits`, inline: true },
+            { name: 'Role Granted', value: `🎭 Shelf Owner`, inline: true },
+            { name: 'Important Notice', value: '⚠️ **reader role required separately from staff** to create threads in #bookshelf forum. Contact staff for reader role assignment.', inline: false },
+            { name: 'Next Steps', value: '1. Contact staff to request reader role assignment\n2. Once you have both roles, you may create threads in #bookshelf\n3. Each chapter posted uses 1 of your feedback credits', inline: false }
         )
         .setColor(0x00AA55);
 }
@@ -1477,31 +1565,36 @@ async function handleHelpSlashCommand(interaction) {
 
 function createHelpEmbed() {
     return new EmbedBuilder()
-        .setTitle('Commands at Your Service ☝️')
-        .setDescription('I am at your disposal, dear writer. Allow me to present the available commands for our literary community:')
+        .setTitle('Essential Commands at Your Service ☝️')
+        .setDescription('Welcome to our distinguished literary community! Here are the fundamental commands for the feedback and credit system:')
         .addFields(
             { 
-                name: '📝 Feedback Commands (Level 5+ Required)', 
-                value: '`/feedback` or `!feedback` - Log your most recent feedback message in this thread\n*Only works in #bookshelf-feedback and #bookshelf-discussion forums*\n`/feedback_status [user]` - Check contribution status', 
+                name: '📝 Earning Feedback Credits (Level 5 Required)', 
+                value: '**Step 1:** Visit #bookshelf-feedback or #bookshelf-discussion forums\n**Step 2:** Find another writer\'s thread and provide thoughtful feedback\n**Step 3:** Use `/feedback` to log your most recent feedback message\n**Step 4:** Earn 1 credit per logged feedback contribution!', 
                 inline: false 
             },
             { 
-                name: '💰 Economy Commands', 
-                value: '`/balance [user]` - Check dinar balance and bookshelf status\n`/store` - View available items\n`/buy [item]` - Purchase items', 
+                name: '💰 Credit System', 
+                value: '`/balance` - Check your credits and chapter allowance\n`/feedback_status` - View monthly progress\n`/hall_of_fame` - See top contributors leaderboard', 
+                inline: false 
+            },
+            { 
+                name: '📚 Bookshelf Access', 
+                value: '`/store` - View purchasable items\n`/buy shelf` - Purchase Shelf Owner role (2 credits)\n**Important:** You need **both** Shelf Owner role (purchasable) **and** reader role (staff-assigned) to post in #bookshelf', 
+                inline: false 
+            },
+            { 
+                name: '✍️ How It Works', 
+                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 2 credits\n• **Request reader role** from staff after purchase\n• **Post chapters** using your accumulated credits\n• **Each chapter** posted uses 1 feedback credit', 
                 inline: false 
             },
             { 
                 name: '👑 Staff Commands', 
-                value: '**Feedback Management:**\n`/feedback_add` - Add feedback points\n`/feedback_remove` - Remove feedback points\n`/feedback_reset` - Complete account reset\n\n**Dinar Management:**\n`/dinars_add` - Add dinars to user\n`/dinars_remove` - Remove dinars from user\n\n**Server Management:**\n`/stats` - View server statistics\n`/setup_bookshelf` - Configure bookshelf permissions', 
-                inline: false 
-            },
-            { 
-                name: '📋 How to Use', 
-                value: '1. **Post your feedback** in the allowed threads\n2. **Use `/feedback`** to log your most recent message\n3. **Earn dinars** and purchase bookshelf access\n4. **Post in bookshelf** forum with your credits', 
+                value: 'Use `/commands` to see the complete list of all available staff tools.', 
                 inline: false 
             }
         )
-        .setColor(0x2F3136)
+        .setColor(0x5865F2)
         .setFooter({ text: 'Your humble servant in all matters literary and administrative' });
 }
 
