@@ -1,8 +1,24 @@
+Version 4:
+
 1. User flow: Get welcomed, give feedback with /feedback, use all commands to see if they work, buy shelf, create a bookshelf thread,
 post a chapter with /post_chapter, see if the credit amount is reduced, use /balance.
 2. See if the account is properly reset when a user is kicked or leaves
 3. See if user can buy bookshelf without sufficient funds
 4. See if user can create a bookshelf thread without the reader role
 5. See if /feedback can be used in anywhere but the designated forums
-6. See if user can use post_chapter if they are not in their own thread, and also if they don't have sufficient funds
-7. See if when the user uses /post_chapter their credit amount is diminished by one, using the /balance command.
+6. See if user can use post_chapter if they are not in their own thread,
+7. See if user can use post_chapter if they have insufficient funds
+8. See if when the user uses /post_chapter their credit amount is diminished by one, using the /balance command.
+
+passed:
+3, 4, 5, 6, 8
+still needs work:
+1, 2, 7
+
+Version 5:
+
+1. See if user is welcomed properly
+2. See if the account is properly reset when a user is kicked or leaves
+3. See if the balance message is logical for a member who already has the reader role
+4. See if the feedback_remove command works properly
+
