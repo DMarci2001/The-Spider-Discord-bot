@@ -71,6 +71,7 @@ async function sendActivityNotification(guild, type, data) {
         if (type === 'thread_created') {
             embed = new EmbedBuilder()
                 .setTitle('📝 New Thread Created')
+                .setDescription(`A new thread has been created in one of our monitored forums.`)
                 .addFields(
                     { name: 'Thread', value: `${data.thread.name}`, inline: false },
                     { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
@@ -79,19 +80,29 @@ async function sendActivityNotification(guild, type, data) {
                 )
                 .setColor(0x00AA55)
                 .setTimestamp();
-        } else if (type === 'thread_message') {
+        } else if (type === 'feedback_command') {
             embed = new EmbedBuilder()
-                .setTitle('💬 Message Posted in Thread')
+                .setTitle('📋 Feedback Command Used')
+                .setDescription(`A member has logged feedback in one of our monitored forums.`)
                 .addFields(
-                    { name: 'Thread', value: `[${data.thread.name}](${data.message.url})`, inline: false },
+                    { name: 'Thread', value: `[${data.thread.name}](${data.messageUrl})`, inline: false },
                     { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
-                    { name: 'Author', value: `<@${data.message.author.id}>`, inline: true },
-                    { name: 'Posted At', value: `<t:${Math.floor(data.message.createdTimestamp / 1000)}:F>`, inline: true },
-                    { name: 'Message Preview', value: data.message.content.length > 100 ? 
-                        data.message.content.substring(0, 100) + '...' : 
-                        data.message.content || '*[No text content]*', inline: false }
+                    { name: 'User', value: `<@${data.userId}>`, inline: true },
+                    { name: 'Used At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                 )
                 .setColor(0x5865F2)
+                .setTimestamp();
+        } else if (type === 'post_chapter_command') {
+            embed = new EmbedBuilder()
+                .setTitle('📚 Chapter Posted')
+                .setDescription(`A member has posted a new chapter using the post_chapter command.`)
+                .addFields(
+                    { name: 'Thread', value: `[${data.thread.name}](${data.messageUrl})`, inline: false },
+                    { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
+                    { name: 'Author', value: `<@${data.userId}>`, inline: true },
+                    { name: 'Posted At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+                )
+                .setColor(0xFF9900)
                 .setTimestamp();
         }
 
@@ -113,7 +124,6 @@ function isMonitoredForumDirect(channel) {
     if (!channel) return false;
     return MONITORED_FORUMS.includes(channel.name);
 }
-
 // ===== WELCOME SYSTEM CLASS =====
 class WelcomeSystem {
     constructor(client) {
@@ -424,11 +434,6 @@ function canPostInBookshelf(userId, member) {
     return hasEnoughFeedback && hasShelfPurchase && hasRequiredRoles;
 }
 
-function canMakeNewPost(userId) {
-    const user = getUserData(userId);
-    return user.currentCredits >= 1;
-}
-
 function getPostCreditStatus(userId, member) {
     const user = getUserData(userId);
     
@@ -478,10 +483,6 @@ function hasStaffPermissions(member) {
     return member?.permissions?.has(PermissionFlagsBits.ManageMessages);
 }
 
-function isServerOwner(userId, guild) {
-    return userId === guild.ownerId;
-}
-
 function hasUserLoggedFeedbackForMessage(messageId, userId) {
     if (!loggedFeedbackMessages[messageId]) return false;
     return loggedFeedbackMessages[messageId].includes(userId);
@@ -510,18 +511,6 @@ function pardonUser(userId) {
     if (!pardonedUsers[monthKey].includes(userId)) {
         pardonedUsers[monthKey].push(userId);
     }
-}
-
-function hasModeratorPermissions(member) {
-    if (!member?.permissions) return false;
-    
-    const hasModPerms = member.permissions.has(PermissionFlagsBits.ManageMessages) || 
-                       member.permissions.has(PermissionFlagsBits.ModerateMembers) ||
-                       member.permissions.has(PermissionFlagsBits.ManageGuild) ||
-                       member.permissions.has(PermissionFlagsBits.Administrator);
-    
-    console.log(`${member.displayName} moderator permissions: ${hasModPerms}`);
-    return hasModPerms;
 }
 
 // ===== MONTHLY PURGE SYSTEM =====
@@ -555,24 +544,6 @@ async function resetUserProgress(userId, guild) {
 }
 
 // ===== TEMPORARY MESSAGE FUNCTIONS =====
-async function sendTemporaryMessage(channel, messageOptions, delay = MESSAGE_DELETE_TIMEOUT) {
-    try {
-        const message = await channel.send(messageOptions);
-        console.log(`Sent temporary message, will delete in ${delay}ms`);
-        setTimeout(async () => {
-            try { 
-                await message.delete(); 
-                console.log('Successfully deleted temporary message');
-            } catch (error) { 
-                console.log('Failed to delete message:', error.message); 
-            }
-        }, delay);
-        return message;
-    } catch (error) {
-        console.error('Failed to send temporary message:', error);
-        return null;
-    }
-}
 
 async function replyTemporary(interaction, messageOptions, delay = MESSAGE_DELETE_TIMEOUT) {
     try {
@@ -675,48 +646,6 @@ async function closeUserBookshelfThreads(guild, userId) {
     } catch (error) {
         console.error('Error closing user threads:', error);
         return 0;
-    }
-}
-
-async function setupBookshelfPermissions(guild) {
-    try {
-        const bookshelfForum = guild.channels.cache.find(channel => 
-            channel.name === 'bookshelf' && channel.type === 15
-        );
-        
-        if (!bookshelfForum) {
-            console.log('⚠️ Bookshelf forum not found');
-            return false;
-        }
-        
-        const shelfRole = guild.roles.cache.find(r => r.name === 'Shelf Owner');
-        const readerRole = guild.roles.cache.find(r => r.name === 'reader');
-        
-        if (!shelfRole) {
-            console.log('⚠️ Shelf Owner role not found');
-            return false;
-        }
-        
-        if (!readerRole) {
-            console.log('⚠️ reader role not found');
-            return false;
-        }
-        
-        await bookshelfForum.permissionOverwrites.edit(guild.id, {
-            CreatePublicThreads: false,
-            CreatePrivateThreads: false
-        });
-        
-        await bookshelfForum.permissionOverwrites.edit(shelfRole.id, {
-            CreatePublicThreads: true,
-            CreatePrivateThreads: false
-        });
-        
-        console.log('✅ Bookshelf forum permissions configured');
-        return true;
-    } catch (error) {
-        console.error('❌ Failed to setup bookshelf permissions:', error.message);
-        return false;
     }
 }
 
@@ -899,6 +828,7 @@ client.on('guildBanAdd', async (ban) => {
 });
 
 // ===== THREAD CREATION HANDLER =====
+// ===== THREAD CREATION HANDLER =====
 client.on('threadCreate', async (thread) => {
     // Send activity notification for monitored forums
     if (thread.parent && MONITORED_FORUMS.includes(thread.parent.name)) {
@@ -944,14 +874,7 @@ client.on('threadCreate', async (thread) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // Monitor messages in threads of monitored forums
-    if (message.channel.isThread() && isMonitoredForum(message.channel)) {
-        console.log(`💬 Message posted in monitored thread: ${message.channel.name} in ${message.channel.parent.name}`);
-        await sendActivityNotification(message.guild, 'thread_message', { 
-            thread: message.channel, 
-            message: message 
-        });
-    }
+    // Remove the activity monitoring for regular messages - we only want commands and threads now
 
     if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
         const isThreadOwner = message.channel.ownerId === message.author.id;
@@ -1272,6 +1195,19 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     
     const feedbackData = await processFeedbackContribution(user.id);
     
+    // Send activity notification if in monitored forum
+    if (isMonitoredForum(channel)) {
+        const messageUrl = isSlash ? 
+            `https://discord.com/channels/${channel.guild.id}/${channel.id}` : 
+            message.url;
+        
+        await sendActivityNotification(channel.guild, 'feedback_command', {
+            thread: channel,
+            userId: user.id,
+            messageUrl: messageUrl
+        });
+    }
+    
     // Create simple permanent confirmation message
     const confirmationMessage = `Feedback logged! ☝️`;
     
@@ -1425,6 +1361,17 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
     spendCredits(userId, 1);
     userRecord.bookshelfPosts += 1;
     await saveData();
+    
+    // Send activity notification for bookshelf posts
+    if (channel.parent && channel.parent.name === 'bookshelf') {
+        const messageUrl = `https://discord.com/channels/${channel.guild.id}/${channel.id}`;
+        
+        await sendActivityNotification(channel.guild, 'post_chapter_command', {
+            thread: channel,
+            userId: user.id,
+            messageUrl: messageUrl
+        });
+    }
     
     const embed = new EmbedBuilder()
         .setTitle('Chapter Posted Successfully ☝️')
