@@ -77,6 +77,7 @@ maybe the /pardon as well. It actually has to kick people from the server who do
 those who have the Level 5 role assigned to them, but still haven't fullfilled the quota. Those who don't have the Level 5 role should 
 be immune.
 2. Since the welcome message now works, you can remove the /test_welcome command.
+3. Make the bot messages disappear after 2 minutes, except the welcome embed in the welcome channel. 
 
 In the code:
 
