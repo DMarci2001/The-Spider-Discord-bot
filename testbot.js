@@ -71,7 +71,6 @@ async function sendActivityNotification(guild, type, data) {
         if (type === 'thread_created') {
             embed = new EmbedBuilder()
                 .setTitle('📝 New Thread Created')
-                .setDescription(`A new thread has been created in one of our monitored forums.`)
                 .addFields(
                     { name: 'Thread', value: `${data.thread.name}`, inline: false },
                     { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
@@ -83,7 +82,6 @@ async function sendActivityNotification(guild, type, data) {
         } else if (type === 'feedback_command') {
             embed = new EmbedBuilder()
                 .setTitle('📋 Feedback Command Used')
-                .setDescription(`A member has logged feedback in one of our monitored forums.`)
                 .addFields(
                     { name: 'Thread', value: `[${data.thread.name}](${data.messageUrl})`, inline: false },
                     { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
@@ -95,7 +93,6 @@ async function sendActivityNotification(guild, type, data) {
         } else if (type === 'post_chapter_command') {
             embed = new EmbedBuilder()
                 .setTitle('📚 Chapter Posted')
-                .setDescription(`A member has posted a new chapter using the post_chapter command.`)
                 .addFields(
                     { name: 'Thread', value: `[${data.thread.name}](${data.messageUrl})`, inline: false },
                     { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
