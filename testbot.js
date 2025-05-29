@@ -136,12 +136,10 @@ class WelcomeSystem {
         const config = WELCOME_CONFIG.embed;
         
         const channels = getClickableChannelMentions(guild);
-        const rulesChannel = getChannelMention(guild, 'rules');
-        const serverGuideChannel = getChannelMention(guild, 'server-guide');
-        
+
         const embed = new EmbedBuilder()
-            .setTitle('A New Bird Joins Our Nest ☝️')
-            .setDescription(`Ah, ${member}... How delightful. Another soul seeks to join our most distinguished gathering of scribes and storytellers. I confess, your arrival brings me considerable pleasure. Welcome, welcome indeed, to Type&Draft, where words are currency and wisdom flows like wine. Please, after you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel}, use the ${channels.botstuff} channel, and trigger the \`/help\` command for instructions on server mechanics. `)
+            .setTitle('A New Bird Joins Our Literary Nest ☝️')
+            .setDescription(`Ah, ${member}... How delightful. Another soul seeks to join our most distinguished gathering of scribes and storytellers. I confess, your arrival brings me considerable pleasure. Welcome, welcome indeed, to Type&Draft, where words are currency and wisdom flows like wine. Please, after you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel}, use the ${channels.botStuff} channel, and trigger the \`/help\` command for instructions on server mechanics.`)
             .setColor(config.color);
 
         if (config.thumbnail) {
@@ -241,7 +239,9 @@ function getClickableChannelMentions(guild) {
         bookshelfFeedback: getChannelMention(guild, 'bookshelf-feedback'),
         bookshelfDiscussion: getChannelMention(guild, 'bookshelf-discussion'),
         bookshelf: getChannelMention(guild, 'bookshelf'),
-        botstuff: getChannelMention(guild, 'bot-stuff')
+        rulesChannel: getChannelMention(guild, 'rules'),
+        serverGuide: getChannelMention(guild, 'server-guide'),
+        botStuff: getChannelMention(guild, 'bot-stuff'),
     };
 }
 
@@ -444,15 +444,24 @@ function pardonUser(userId) {
     }
 }
 
+function hasModeratorPermissions(member) {
+    return member?.permissions?.has(PermissionFlagsBits.ManageMessages) || 
+           member?.permissions?.has(PermissionFlagsBits.ModerateMembers) ||
+           member?.permissions?.has(PermissionFlagsBits.ManageGuild);
+}
+
 // ===== MONTHLY PURGE SYSTEM =====
-async function performMonthlyPurge(guild) {
-    console.log('Starting monthly purge - kicking inactive Level 5 members...');
+async function performMonthlyPurge(guild, isManual = false) {
+    console.log(`Starting ${isManual ? 'manual' : 'automatic'} purge - kicking inactive Level 5 members...`);
     
-    const now = new Date();
-    const purgeStartDate = new Date('2025-07-01');
-    if (now < purgeStartDate) {
-        console.log('Monthly purge not yet active (starts July 1, 2025)');
-        return { success: false, reason: 'not_active_yet' };
+    // Only check date for automatic purges, not manual ones
+    if (!isManual) {
+        const now = new Date();
+        const purgeStartDate = new Date('2025-07-01');
+        if (now < purgeStartDate) {
+            console.log('Monthly purge not yet active (starts July 1, 2025)');
+            return { success: false, reason: 'not_active_yet' };
+        }
     }
     
     // Force fetch all guild members to ensure cache is populated
@@ -467,6 +476,7 @@ async function performMonthlyPurge(guild) {
     const purgedUsers = [];
     const exemptUsers = [];
     const pardonedList = [];
+    const immuneUsers = [];
     
     // Get all members with Level 5 role
     const level5Members = guild.members.cache.filter(member => hasLevel5Role(member));
@@ -479,7 +489,24 @@ async function performMonthlyPurge(guild) {
     }
     
     for (const [userId, member] of level5Members) {
-        if (isUserPardoned(userId)) {
+        // Check immunity conditions first
+        const isServerOwner = userId === guild.ownerId;
+        const isModerator = hasModeratorPermissions(member);
+        const isPardoned = isUserPardoned(userId);
+        
+        if (isServerOwner) {
+            console.log(`Skipping ${member.displayName} - server owner (immune)`);
+            immuneUsers.push(`${member.displayName} (Server Owner)`);
+            continue;
+        }
+        
+        if (isModerator) {
+            console.log(`Skipping ${member.displayName} - moderator (immune)`);
+            immuneUsers.push(`${member.displayName} (Moderator)`);
+            continue;
+        }
+        
+        if (isPardoned) {
             console.log(`Skipping ${member.displayName} - pardoned this month`);
             pardonedList.push(member.displayName);
             continue;
@@ -521,7 +548,7 @@ async function performMonthlyPurge(guild) {
         }
     }
     
-    console.log(`Monthly purge completed: ${purgedCount} Level 5 members kicked from server for inactivity`);
+    console.log(`${isManual ? 'Manual' : 'Automatic'} purge completed: ${purgedCount} Level 5 members kicked from server for inactivity`);
     if (purgedUsers.length > 0) {
         console.log(`Kicked users: ${purgedUsers.join(', ')}`);
     }
@@ -532,7 +559,9 @@ async function performMonthlyPurge(guild) {
         purgedUsers, 
         pardonedUsers: pardonedList, 
         exemptUsers,
-        totalLevel5: level5Members.size
+        immuneUsers,
+        totalLevel5: level5Members.size,
+        isManual
     };
 }
 
@@ -2048,7 +2077,7 @@ async function createStatsEmbed(guild) {
         .setDescription('Allow me to present the current state of our literary realm, as observed from my position of humble service.')
         .addFields(
             { name: 'Total Writers in Our Halls', value: `${totalMembers} souls`, inline: true },
-            { name: 'Level 5 Members Tracked', value: `${totalLevel5} writers`, inline: true },
+            { name: 'Members Tracked', value: `${totalLevel5} writers`, inline: true },
             { name: 'Active Contributors This Month', value: `${monthlyContributors} writers`, inline: true },
             { name: 'Monthly Participation Rate', value: `${contributionRate}%`, inline: true },
             { name: 'Community Health', value: contributionRate >= 70 ? '✅ Flourishing' : contributionRate >= 50 ? '⚠️ Moderate' : '🔴 Requires attention', inline: true },
