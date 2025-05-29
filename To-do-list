@@ -70,6 +70,14 @@ the welcome embed appeared correctly, only in the wrong channel, #general, but n
 when they shouldn't, and the command still doesn't work in general, because it doesn't remove the credit, because after 
 feedback_remove is called, the balance command still shows the same amount as before the remove command was called.
 
+Version 6:
+
+1. The manual_purge command is buggy as hell, doesn't work at all. completely rework the stats and the manual_purge commands.
+maybe the /pardon as well. It actually has to kick people from the server who don't meet the monthly quota. The bot should only kick
+those who have the Level 5 role assigned to them, but still haven't fullfilled the quota. Those who don't have the Level 5 role should 
+be immune.
+2. Since the welcome message now works, you can remove the /test_welcome command.
+
 In the code:
 
 1. Check for the term "literary community" in the code, and cut back on it.
