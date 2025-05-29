@@ -2,6 +2,12 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes } = require('discord.js');
 const fs = require('fs').promises;
 
+// ===== MESSAGE DELETION TIMEOUT CONFIGURATION =====
+// Change this value to adjust how long bot messages stay before deletion
+// Current: 5 minutes (300000 milliseconds)
+// Examples: 60000 = 1 minute, 180000 = 3 minutes, 600000 = 10 minutes
+const MESSAGE_DELETE_TIMEOUT = 300000; // 5 minutes
+
 // ===== BOT SETUP =====
 const client = new Client({
     intents: [
@@ -24,6 +30,8 @@ const STORE_ITEMS = {
 };
 
 const ALLOWED_FEEDBACK_THREADS = ['bookshelf-feedback', 'bookshelf-discussion'];
+const MONITORED_FORUMS = ['bookshelf-feedback', 'bookshelf-discussion', 'bookshelf'];
+const ACTIVITY_MONITOR_CHANNEL = 'activity-monitor';
 const MONTHLY_FEEDBACK_REQUIREMENT = 1;
 const MINIMUM_FEEDBACK_FOR_SHELF = 2;
 
@@ -45,6 +53,66 @@ let monthlyFeedback = {};
 let userData = {};
 let loggedFeedbackMessages = {};
 let pardonedUsers = {};
+
+// ===== ACTIVITY MONITORING FUNCTIONS =====
+async function sendActivityNotification(guild, type, data) {
+    try {
+        const activityChannel = guild.channels.cache.find(ch => 
+            ch.name === ACTIVITY_MONITOR_CHANNEL && ch.isTextBased()
+        );
+        
+        if (!activityChannel) {
+            console.log(`⚠️ Activity monitor channel #${ACTIVITY_MONITOR_CHANNEL} not found`);
+            return;
+        }
+
+        let embed;
+        
+        if (type === 'thread_created') {
+            embed = new EmbedBuilder()
+                .setTitle('📝 New Thread Created')
+                .addFields(
+                    { name: 'Thread', value: `${data.thread.name}`, inline: false },
+                    { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
+                    { name: 'Creator', value: `<@${data.thread.ownerId}>`, inline: true },
+                    { name: 'Created At', value: `<t:${Math.floor(data.thread.createdTimestamp / 1000)}:F>`, inline: true }
+                )
+                .setColor(0x00AA55)
+                .setTimestamp();
+        } else if (type === 'thread_message') {
+            embed = new EmbedBuilder()
+                .setTitle('💬 Message Posted in Thread')
+                .addFields(
+                    { name: 'Thread', value: `[${data.thread.name}](${data.message.url})`, inline: false },
+                    { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
+                    { name: 'Author', value: `<@${data.message.author.id}>`, inline: true },
+                    { name: 'Posted At', value: `<t:${Math.floor(data.message.createdTimestamp / 1000)}:F>`, inline: true },
+                    { name: 'Message Preview', value: data.message.content.length > 100 ? 
+                        data.message.content.substring(0, 100) + '...' : 
+                        data.message.content || '*[No text content]*', inline: false }
+                )
+                .setColor(0x5865F2)
+                .setTimestamp();
+        }
+
+        if (embed) {
+            await activityChannel.send({ embeds: [embed] });
+            console.log(`📢 Activity notification sent to #${ACTIVITY_MONITOR_CHANNEL}`);
+        }
+    } catch (error) {
+        console.error('❌ Failed to send activity notification:', error);
+    }
+}
+
+function isMonitoredForum(channel) {
+    if (!channel || !channel.parent) return false;
+    return MONITORED_FORUMS.includes(channel.parent.name);
+}
+
+function isMonitoredForumDirect(channel) {
+    if (!channel) return false;
+    return MONITORED_FORUMS.includes(channel.name);
+}
 
 // ===== WELCOME SYSTEM CLASS =====
 class WelcomeSystem {
@@ -487,12 +555,14 @@ async function resetUserProgress(userId, guild) {
 }
 
 // ===== TEMPORARY MESSAGE FUNCTIONS =====
-async function sendTemporaryMessage(channel, messageOptions, delay = 1800000) {
+async function sendTemporaryMessage(channel, messageOptions, delay = MESSAGE_DELETE_TIMEOUT) {
     try {
         const message = await channel.send(messageOptions);
+        console.log(`Sent temporary message, will delete in ${delay}ms`);
         setTimeout(async () => {
             try { 
                 await message.delete(); 
+                console.log('Successfully deleted temporary message');
             } catch (error) { 
                 console.log('Failed to delete message:', error.message); 
             }
@@ -504,14 +574,16 @@ async function sendTemporaryMessage(channel, messageOptions, delay = 1800000) {
     }
 }
 
-async function replyTemporary(interaction, messageOptions, delay = 1800000) {
+async function replyTemporary(interaction, messageOptions, delay = MESSAGE_DELETE_TIMEOUT) {
     try {
         const message = await interaction.reply(messageOptions);
+        console.log(`Sent temporary interaction reply, will delete in ${delay}ms`);
         setTimeout(async () => {
             try { 
                 await interaction.deleteReply(); 
+                console.log('Successfully deleted temporary interaction reply');
             } catch (error) { 
-                console.log('Failed to delete reply:', error.message); 
+                console.log('Failed to delete interaction reply:', error.message); 
             }
         }, delay);
         return message;
@@ -521,12 +593,14 @@ async function replyTemporary(interaction, messageOptions, delay = 1800000) {
     }
 }
 
-async function replyTemporaryMessage(message, messageOptions, delay = 1800000) {
+async function replyTemporaryMessage(message, messageOptions, delay = MESSAGE_DELETE_TIMEOUT) {
     try {
         const reply = await message.reply(messageOptions);
+        console.log(`Sent temporary message reply, will delete in ${delay}ms`);
         setTimeout(async () => {
             try { 
                 await reply.delete(); 
+                console.log('Successfully deleted temporary message reply');
             } catch (error) { 
                 console.log('Failed to delete reply:', error.message); 
             }
@@ -542,7 +616,7 @@ async function replyTemporaryMessage(message, messageOptions, delay = 1800000) {
 async function saveData() {
     try {
         const data = { monthlyFeedback, userData, loggedFeedbackMessages, pardonedUsers };
-        await fs.writeFile('testbot_data.json', JSON.stringify(data, null, 2));
+        await fs.writeFile('bot_data.json', JSON.stringify(data, null, 2));
         console.log('Data saved successfully');
     } catch (error) {
         console.error('Error saving data:', error);
@@ -551,7 +625,7 @@ async function saveData() {
 
 async function loadData() {
     try {
-        const data = await fs.readFile('testbot_data.json', 'utf8');
+        const data = await fs.readFile('bot_data.json', 'utf8');
         const parsed = JSON.parse(data);
         monthlyFeedback = parsed.monthlyFeedback || {};
         userData = parsed.userData || {};
@@ -666,11 +740,6 @@ async function processFeedbackContribution(userId) {
     };
 }
 
-function createFeedbackEmbed(user, feedbackData) {
-    return new EmbedBuilder()
-        .setDescription(`Feedback Credit Recorded ☝️`);
-}
-
 // ===== FIND USER'S LATEST MESSAGE =====
 async function findUserLatestMessage(channel, userId) {
     try {
@@ -780,11 +849,15 @@ const commands = [
         .setName('setup_bookshelf')
         .setDescription('Grant bookshelf access to a member (Staff only)')
         .addUserOption(option => option.setName('user').setDescription('Member to grant bookshelf access to').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('purge_list')
+        .setDescription('View all Level 5 members who would be purged for not meeting monthly requirements (Staff only)'),
 ];
 
 async function registerCommands() {
     try {
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT2_TOKEN);
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
         console.log('Started refreshing application (/) commands.');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('Successfully reloaded application (/) commands.');
@@ -827,6 +900,12 @@ client.on('guildBanAdd', async (ban) => {
 
 // ===== THREAD CREATION HANDLER =====
 client.on('threadCreate', async (thread) => {
+    // Send activity notification for monitored forums
+    if (thread.parent && MONITORED_FORUMS.includes(thread.parent.name)) {
+        console.log(`📝 Thread created in monitored forum: ${thread.name} in ${thread.parent.name}`);
+        await sendActivityNotification(thread.guild, 'thread_created', { thread });
+    }
+
     if (thread.parent && thread.parent.name === 'bookshelf') {
         console.log(`New bookshelf thread created: ${thread.name} by ${thread.ownerId}`);
         
@@ -864,6 +943,15 @@ client.on('threadCreate', async (thread) => {
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
+
+    // Monitor messages in threads of monitored forums
+    if (message.channel.isThread() && isMonitoredForum(message.channel)) {
+        console.log(`💬 Message posted in monitored thread: ${message.channel.name} in ${message.channel.parent.name}`);
+        await sendActivityNotification(message.guild, 'thread_message', { 
+            thread: message.channel, 
+            message: message 
+        });
+    }
 
     if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
         const isThreadOwner = message.channel.ownerId === message.author.id;
@@ -965,6 +1053,7 @@ async function handleCommand(message) {
             buy: () => handleBuyCommand(message, args),
             setup_bookshelf: () => handleSetupBookshelfCommand(message),
             pardon: () => handlePardonCommand(message, args),
+            purge_list: () => handlePurgeListCommand(message),
         };
         
         const handler = commandHandlers[command];
@@ -996,6 +1085,7 @@ async function handleSlashCommand(interaction) {
         buy: () => handleBuySlashCommand(interaction),
         setup_bookshelf: () => handleSetupBookshelfSlashCommand(interaction),
         pardon: () => handlePardonSlashCommand(interaction),
+        purge_list: () => handlePurgeListSlashCommand(interaction),
     };
     
     const handler = commandHandlers[interaction.commandName];
@@ -1004,18 +1094,81 @@ async function handleSlashCommand(interaction) {
     }
 }
 
+// ===== PURGE LIST COMMANDS =====
+async function handlePurgeListCommand(message) {
+    if (!hasStaffPermissions(message.member)) {
+        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
+    }
+    
+    const embed = await createPurgeListEmbed(message.guild);
+    await replyTemporaryMessage(message, { embeds: [embed] });
+}
+
+async function handlePurgeListSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const embed = await createPurgeListEmbed(interaction.guild);
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function createPurgeListEmbed(guild) {
+    // Get all members
+    const allMembers = await guild.members.fetch();
+    
+    let purgeList = '';
+    let safeList = '';
+    let purgeCount = 0;
+    let safeCount = 0;
+    
+    // Process each Level 5 member
+    allMembers.forEach((member, userId) => {
+        const monthlyCount = getUserMonthlyFeedback(userId);
+        const isPardoned = isUserPardoned(userId);
+        const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
+        
+        if (!meetingRequirement && !isPardoned) {
+            // Would be purged
+            purgeCount++;
+            purgeList += `❌ **${member.displayName}**\n`;
+        }
+    });
+    
+    // Truncate lists if too long
+    if (purgeList.length > 1000) {
+        purgeList = purgeList.substring(0, 950) + '...\n*(List truncated)*';
+    }
+    if (safeList.length > 1000) {
+        safeList = safeList.substring(0, 950) + '...\n*(List truncated)*';
+    }
+    
+    if (!purgeList) purgeList = '• No members would be purged this month';
+    if (!safeList) safeList = '• No members are safe this month';
+    
+    const purgePercentage = allMembers.size > 0 ? Math.round((purgeCount / allMembers.size) * 100) : 0;
+    
+    return new EmbedBuilder()
+        .setTitle('Monthly Purge List ☝️')
+        .addFields(
+            { name: `🔥 Would Be Purged (${purgeCount})`, value: purgeList, inline: false },
+            { name: 'Requirements', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: false }
+        )
+        .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
+}
+
 // ===== FEEDBACK COMMANDS =====
 async function handleFeedbackCommand(message) {
     console.log(`Processing !feedback command for ${message.author.displayName}`);
-    return await processFeedbackCommand(message.author, message.member, message.channel, false);
+    return await processFeedbackCommand(message.author, message.member, message.channel, false, null, message);
 }
 
 async function handleFeedbackSlashCommand(interaction) {
     console.log(`Processing /feedback command for ${interaction.user.displayName}`);
-    return await processFeedbackCommand(interaction.user, interaction.member, interaction.channel, true, interaction);
+    return await processFeedbackCommand(interaction.user, interaction.member, interaction.channel, true, interaction, null);
 }
 
-async function processFeedbackCommand(user, member, channel, isSlash, interaction = null) {
+async function processFeedbackCommand(user, member, channel, isSlash, interaction = null, message = null) {
     console.log(`Processing feedback command for ${user.displayName} in ${channel.name}`);
     
     // Ensure member object is fresh (re-fetch if needed)
@@ -1040,7 +1193,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         if (isSlash) {
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
         } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
+            return await replyTemporaryMessage(message, { embeds: [embed] });
         }
     }
     
@@ -1118,11 +1271,16 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     logFeedbackForMessage(latestMessage.id, user.id);
     
     const feedbackData = await processFeedbackContribution(user.id);
+    
+    // Create simple permanent confirmation message
     const confirmationMessage = `Feedback logged! ☝️`;
-
+    
+    console.log('Feedback command completed successfully');
+    
+    // Send permanent simple reply (no timeout)
     if (isSlash) {
         await interaction.reply({ content: confirmationMessage });
-    }   else {
+    } else {
         await message.reply(confirmationMessage);
     }
 }
@@ -1429,7 +1587,7 @@ function createStoreEmbed(guild) {
 async function handleBuyCommand(message, args) {
     const itemKey = args[0]?.toLowerCase();
     if (!itemKey || !STORE_ITEMS[itemKey]) {
-        return replyTemporaryMessage(message, 'Pray, specify a valid item to purchase. Use `/store` to view available items.');
+        return replyTemporaryMessage(message, { content: 'Pray, specify a valid item to purchase. Use `/store` to view available items.' });
     }
     
     const result = await processPurchase(message.author.id, itemKey, message.member, message.guild);
@@ -1548,11 +1706,11 @@ function createPurchaseResultEmbed(user, itemKey, result, guild) {
 // ===== STAFF COMMANDS =====
 async function handleFeedbackAddCommand(message, args) {
     if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
+        return replyTemporaryMessage(message, { content: 'I fear you lack the necessary authority to conduct such administrative actions, my lord.' });
     }
     
     const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose feedback record you wish to enhance.');
+    if (!user) return replyTemporaryMessage(message, { content: 'Pray, mention the writer whose feedback record you wish to enhance.' });
     
     const amount = Math.max(1, parseInt(args[1]) || 1);
     await addFeedbackToUser(user.id, amount);
@@ -1589,11 +1747,11 @@ async function addFeedbackToUser(userId, amount) {
 
 async function handleFeedbackRemoveCommand(message, args) {
     if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
+        return replyTemporaryMessage(message, { content: 'I fear you lack the necessary authority to conduct such administrative actions, my lord.' });
     }
     
     const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose credit balance requires adjustment.');
+    if (!user) return replyTemporaryMessage(message, { content: 'Pray, mention the writer whose credit balance requires adjustment.' });
     
     const amount = Math.max(1, parseInt(args[1]) || 1);
     console.log(`Staff removing ${amount} from all feedback counters for ${user.displayName}`);
@@ -1799,11 +1957,11 @@ function createCreditBalanceModificationEmbed(user, amount, result, action) {
 // ===== FEEDBACK RESET COMMANDS =====
 async function handleFeedbackResetCommand(message) {
     if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
+        return replyTemporaryMessage(message, { content: 'I fear you lack the necessary authority to conduct such administrative actions, my lord.' });
     }
     
     const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose record you wish to reset to a clean slate.');
+    if (!user) return replyTemporaryMessage(message, { content: 'Pray, mention the writer whose record you wish to reset to a clean slate.' });
     
     const resetData = await performCompleteReset(user.id, message.guild);
     const embed = createResetEmbed(user, resetData);
@@ -1940,7 +2098,7 @@ function createPardonEmbed(user, action) {
 // ===== STATS COMMANDS =====
 async function handleStatsCommand(message) {
     if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return replyTemporaryMessage(message, 'I regret that such privileged information is reserved for those with administrative authority, my lord.');
+        return replyTemporaryMessage(message, { content: 'I regret that such privileged information is reserved for those with administrative authority, my lord.' });
     }
     
     const embed = await createStatsEmbed(message.guild);
@@ -2123,7 +2281,7 @@ function createAllCommandsEmbed() {
             },
             { 
                 name: '👑 Server Administration', 
-                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Grant bookshelf access to a member\n`/pardon` - Pardon a Level 5 member from monthly feedback requirement', 
+                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Grant bookshelf access to a member\n`/pardon` - Pardon a Level 5 member from monthly feedback requirement\n`/purge_list` - View all Level 5 members who would be purged for not meeting monthly requirements', 
                 inline: false 
             }
         )
@@ -2232,4 +2390,4 @@ async function sendStaffOnlyMessage(target, isInteraction = false) {
 }
 
 // ===== BOT LOGIN =====
-client.login(process.env.DISCORD_BOT2_TOKEN);
+client.login(process.env.DISCORD_BOT_TOKEN);
