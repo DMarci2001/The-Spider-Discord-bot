@@ -85,6 +85,12 @@ In the code:
 2. Check for "5+" and "1+" and delete the pluses.
 3. "Staff will review and assign reader role when ready" reword this message, and use @reader terminology.
 
+Test bot
+
+Version 3:
+
+1. Khan doesn't own his shelf, but can still post in it.
+
 
 
 
