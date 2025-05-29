@@ -17,7 +17,7 @@ const STORE_ITEMS = {
     shelf: {
         name: "Bookshelf Access",
         description: "Grants you the Shelf Owner role (reader role required separately from staff)",
-        price: 2,
+        price: 1,
         role: "Shelf Owner",
         emoji: "📚"
     }
@@ -65,7 +65,7 @@ function hasLevel5Role(member) {
         return false;
     });
     
-    console.log(`${member.displayName} has Level 5+ role:`, hasRole);
+    console.log(`${member.displayName} has Level 5 role:`, hasRole);
     return hasRole;
 }
 
@@ -809,7 +809,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     if (!isInAllowedFeedbackThread(channel)) {
         const embed = new EmbedBuilder()
             .setTitle('Incorrect Thread ☝️')
-            .setDescription('I regret to inform you that feedback credits may only be logged within the designated literary threads of our community.')
+            .setDescription('I regret to inform you that feedback credits may only be logged within the designated literary threads of our community, under works other than your own.')
             .addFields({
                 name: 'Permitted Threads',
                 value: '• **bookshelf-feedback** forum - For recording feedback given to fellow writers\n• **bookshelf-discussion** forum - For discussions about literary critiques',
@@ -937,7 +937,7 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
     // Check if in bookshelf thread
     if (!channel.isThread() || !channel.parent || channel.parent.name !== 'bookshelf') {
         const embed = new EmbedBuilder()
-            .setTitle('Bookshelf Thread Required ☝️')
+            .setTitle('Wrong Thread ☝️')
             .setDescription('I regret to inform you that the post chapter command may only be used within your own bookshelf thread, dear writer.')
             .addFields({
                 name: 'How to Use',
@@ -1594,7 +1594,7 @@ function createAllCommandsEmbed() {
         .setDescription('Your comprehensive guide to all available commands in our literary realm, organized by purpose and authority level.')
         .addFields(
             { 
-                name: '📝 Feedback System (Level 5+ Required)', 
+                name: '📝 Feedback System (Level 5 Required)', 
                 value: '`/feedback` or `!feedback` - Log your most recent feedback message\n`/feedback_status [user]` - Check monthly feedback status', 
                 inline: false 
             },
@@ -1636,10 +1636,10 @@ async function handleHelpSlashCommand(interaction) {
 function createHelpEmbed() {
     return new EmbedBuilder()
         .setTitle('Essential Commands at Your Service ☝️')
-        .setDescription('Welcome to our distinguished literary community! Here are the fundamental commands for the feedback and credit system:')
+        .setDescription('Welcome to our distinguished literary community! Behold the fundamental commands for the feedback and credit system:')
         .addFields(
             { 
-                name: '📝 Earning Feedback Credits (Level 5+ Required)', 
+                name: '📝 Earning Feedback Credits (Level 5 Required)', 
                 value: '**Step 1:** Visit #bookshelf-feedback or #bookshelf-discussion forums\n**Step 2:** Find another writer\'s thread and provide thoughtful feedback\n**Step 3:** Use `/feedback` to log your most recent feedback message\n**Step 4:** Earn 1 credit per logged feedback contribution!', 
                 inline: false 
             },
@@ -1655,7 +1655,7 @@ function createHelpEmbed() {
             },
             { 
                 name: '✍️ How It Works', 
-                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 2+ credits\n• **Request reader role** from staff after purchase\n• **Post chapters** using `/post_chapter` (costs 1 credit each)', 
+                value: '• **Give feedback** to others in feedback forums\n• **Log with `/feedback`** to earn credits\n• **Purchase shelf access** when you have 1 free credit\n• **Post chapters** using `/post_chapter` (costs 1 credit each)', 
                 inline: false 
             },
             { 
