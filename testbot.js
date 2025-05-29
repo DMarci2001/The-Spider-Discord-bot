@@ -25,7 +25,7 @@ const STORE_ITEMS = {
 
 const ALLOWED_FEEDBACK_THREADS = ['bookshelf-feedback', 'bookshelf-discussion'];
 const MONTHLY_FEEDBACK_REQUIREMENT = 2;
-const MINIMUM_FEEDBACK_FOR_SHELF = 2; // Changed from 1 to 2
+const MINIMUM_FEEDBACK_FOR_SHELF = 2;
 
 // Welcome system configuration
 const WELCOME_CONFIG = {
@@ -43,8 +43,8 @@ const WELCOME_CONFIG = {
 // ===== DATA STORAGE =====
 let monthlyFeedback = {};
 let userData = {};
-let loggedFeedbackMessages = {}; // Track which messages have had feedback logged
-let pardonedUsers = {}; // Track users pardoned from monthly requirements
+let loggedFeedbackMessages = {};
+let pardonedUsers = {};
 
 // ===== WELCOME SYSTEM CLASS =====
 class WelcomeSystem {
@@ -80,7 +80,6 @@ class WelcomeSystem {
     }
 
     findWelcomeChannel(guild) {
-        // Priority 1: Exact channel name matches
         for (const channelName of WELCOME_CONFIG.channelNames) {
             const channel = guild.channels.cache.find(ch => 
                 ch.name === channelName && ch.isTextBased()
@@ -91,7 +90,6 @@ class WelcomeSystem {
             }
         }
 
-        // Priority 2: Channels within welcome categories
         for (const categoryName of WELCOME_CONFIG.categoryNames) {
             const category = guild.channels.cache.find(ch => 
                 ch.type === 4 && ch.name.toLowerCase().includes(categoryName)
@@ -106,7 +104,6 @@ class WelcomeSystem {
             }
         }
 
-        // Priority 3: Any channel with 'welcome' in name
         const fallbackChannel = guild.channels.cache.find(ch => 
             ch.name.toLowerCase().includes('welcome') && ch.isTextBased()
         );
@@ -135,39 +132,17 @@ class WelcomeSystem {
     }
 
     createWelcomeEmbed(member) {
-    const { guild } = member;
-    const config = WELCOME_CONFIG.embed;
-    
-    const channels = getClickableChannelMentions(guild);
-    const rulesChannel = getChannelMention(guild, 'rules');
-    const serverGuideChannel = getChannelMention(guild, 'server-guide');
-    
-    const embed = new EmbedBuilder()
-        .setTitle('A New Bird Joins Our Literary Nest ☝️')
-        .setDescription(`Ah, ${member}... How delightful. Another soul seeks to join our most distinguished gathering of scribes and storytellers. I confess, your arrival brings me considerable pleasure. Welcome, welcome indeed, to Type&Draft - where words are currency and wisdom flows like wine.`)
-        .setColor(config.color);
-
-    embed.addFields([
-        {
-            name: '📜 The Sacred Texts, If You Will',
-            value: `Before we proceed further, dear ${member.displayName}, I must insist - nay, *implore* - that you acquaint yourself with ${rulesChannel} and ${serverGuideChannel}. Knowledge, as they say, is power... and ignorance, well, ignorance has toppled kingdoms.`,
-            inline: false
-        },
-        {
-            name: '🕊️ Your First Steps in Our Realm',
-            value: [
-                '• Seek out our feedback forums - the sacred grounds where we share our thoughts and insights',
-                '• Master the `/help` command - your key to understanding our arrangements',
-                '• Offer your wisdom to fellow writers, and watch your influence grow'
-            ].join('\n'),
-            inline: false
-        },
-        {
-            name: '🗡️ A Word of Counsel',
-            value: `I have served many masters through my long years of serving the realm, and learned this truth; those who give generously of their knowledge, find themselves richly rewarded. Contribute thoughtfully, and perhaps, you too shall join the ranks of our most celebrated literary voices. The choice, as always, remains yours.`,
-            inline: false
-        }
-    ]);
+        const { guild } = member;
+        const config = WELCOME_CONFIG.embed;
+        
+        const channels = getClickableChannelMentions(guild);
+        const rulesChannel = getChannelMention(guild, 'rules');
+        const serverGuideChannel = getChannelMention(guild, 'server-guide');
+        
+        const embed = new EmbedBuilder()
+            .setTitle('A New Bird Joins Our Nest ☝️')
+            .setDescription(`Ah, ${member}... How delightful. Another soul seeks to join our most distinguished gathering of scribes and storytellers. I confess, your arrival brings me considerable pleasure. Welcome, welcome indeed, to Type&Draft, where words are currency and wisdom flows like wine. Please, after you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel}, use the ${channels.botstuff} channel, and trigger the \`/help\` command for instructions on server mechanics. `)
+            .setColor(config.color);
 
         if (config.thumbnail) {
             embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true }));
@@ -251,25 +226,8 @@ class WelcomeSystem {
             this.logger.error('❌ Failed to send error notification:', notifyError);
         }
     }
-
-    async testWelcome(guild, userId) {
-        try {
-            const member = await guild.members.fetch(userId);
-            this.logger.log(`🧪 Testing welcome system for ${member.displayName}`);
-            
-            await this.sendWelcomeMessage(member);
-            
-            this.logger.log('✅ Welcome system test successful');
-            return true;
-            
-        } catch (error) {
-            this.logger.error('❌ Welcome system test failed:', error);
-            return false;
-        }
-    }
 }
 
-// Initialize the welcome system
 const welcomeSystem = new WelcomeSystem(client);
 
 // ===== CHANNEL MENTION HELPER FUNCTIONS =====
@@ -282,7 +240,8 @@ function getClickableChannelMentions(guild) {
     return {
         bookshelfFeedback: getChannelMention(guild, 'bookshelf-feedback'),
         bookshelfDiscussion: getChannelMention(guild, 'bookshelf-discussion'),
-        bookshelf: getChannelMention(guild, 'bookshelf')
+        bookshelf: getChannelMention(guild, 'bookshelf'),
+        botstuff: getChannelMention(guild, 'bot-stuff')
     };
 }
 
@@ -314,7 +273,7 @@ function hasLevel5Role(member) {
         if (role.name === 'Level 5') return true;
         if (role.name.startsWith('Level ')) {
             const level = parseInt(role.name.split(' ')[1]);
-            return level >= 15; // Level 15+ includes Level 5 privileges
+            return level >= 15;
         }
         return false;
     });
@@ -332,20 +291,18 @@ function getUserData(userId) {
     if (!userData[userId]) {
         userData[userId] = {
             totalFeedbackAllTime: 0,
-            currentCredits: 0, // Available credits for posting
+            currentCredits: 0,
             purchases: [],
             bookshelfPosts: 0
         };
     }
     
     const user = userData[userId];
-    // Ensure all properties exist and are correct types
     if (!Array.isArray(user.purchases)) user.purchases = [];
     if (typeof user.totalFeedbackAllTime !== 'number') user.totalFeedbackAllTime = 0;
     if (typeof user.currentCredits !== 'number') user.currentCredits = 0;
     if (typeof user.bookshelfPosts !== 'number') user.bookshelfPosts = 0;
     
-    // Ensure no negative values
     user.totalFeedbackAllTime = Math.max(0, user.totalFeedbackAllTime);
     user.currentCredits = Math.max(0, user.currentCredits);
     user.bookshelfPosts = Math.max(0, user.bookshelfPosts);
@@ -359,7 +316,6 @@ function hasReaderRole(member) {
 }
 
 function canCreateBookshelfThread(member) {
-    // Must have both Shelf Owner role AND reader role to create threads
     return hasShelfRole(member) && hasReaderRole(member);
 }
 
@@ -408,22 +364,18 @@ function canMakeNewPost(userId) {
 function getPostCreditStatus(userId, member) {
     const user = getUserData(userId);
     
-    // If user doesn't have enough total feedback to even qualify for purchase
     if (user.totalFeedbackAllTime < 1) {
         return `📝 Need bookshelf to qualify for purchase`;
     }
     
-    // If user hasn't purchased shelf access yet
     if (!user.purchases.includes('shelf')) {
         return '💰 Qualified for purchase';
     }
     
-    // If user has purchased but doesn't have reader role
     if (!member || !hasReaderRole(member)) {
         return '🔓 Awaiting reader role from staff';
     }
     
-    // If user has full access, check credits for posting
     if (user.currentCredits >= 1) {
         return `✅ ${user.currentCredits} credit${user.currentCredits === 1 ? '' : 's'} available for chapters`;
     } else {
@@ -437,7 +389,6 @@ function isInAllowedFeedbackThread(channel) {
         console.log(`Parent channel: ${channel.parent.name}`);
     }
     
-    // If it's a thread, check if the PARENT forum name is in allowed list
     if (channel.isThread() && channel.parent) {
         const parentIsAllowed = ALLOWED_FEEDBACK_THREADS.includes(channel.parent.name);
         if (parentIsAllowed) {
@@ -446,7 +397,6 @@ function isInAllowedFeedbackThread(channel) {
         }
     }
     
-    // Check if it's the forum/channel itself with allowed name
     if (ALLOWED_FEEDBACK_THREADS.includes(channel.name)) {
         console.log(`✅ Channel/forum ${channel.name} is in allowed list`);
         return true;
@@ -496,43 +446,49 @@ function pardonUser(userId) {
 
 // ===== MONTHLY PURGE SYSTEM =====
 async function performMonthlyPurge(guild) {
-    console.log('Starting monthly purge - kicking inactive readers...');
+    console.log('Starting monthly purge - kicking inactive Level 5 members...');
     
-    // Check if purging should be active (starting July 1, 2025)
     const now = new Date();
     const purgeStartDate = new Date('2025-07-01');
     if (now < purgeStartDate) {
         console.log('Monthly purge not yet active (starts July 1, 2025)');
-        return;
+        return { success: false, reason: 'not_active_yet' };
     }
     
-    const readerRole = guild.roles.cache.find(r => r.name === 'reader');
-    if (!readerRole) {
-        console.log('reader role not found for monthly purge');
-        return;
+    // Force fetch all guild members to ensure cache is populated
+    try {
+        await guild.members.fetch();
+        console.log(`Fetched ${guild.members.cache.size} members for purge`);
+    } catch (error) {
+        console.error('Failed to fetch guild members for purge:', error);
     }
     
     let purgedCount = 0;
     const purgedUsers = [];
+    const exemptUsers = [];
+    const pardonedList = [];
     
-    // Get all members with reader role
-    const readersWithRole = guild.members.cache.filter(member => 
-        member.roles.cache.has(readerRole.id)
-    );
+    // Get all members with Level 5 role
+    const level5Members = guild.members.cache.filter(member => hasLevel5Role(member));
     
-    for (const [userId, member] of readersWithRole) {
-        // Skip if user is pardoned this month
+    console.log(`Found ${level5Members.size} Level 5 members for purge evaluation`);
+    
+    if (level5Members.size === 0) {
+        console.log('No Level 5 members found for monthly purge');
+        return { success: false, reason: 'no_level5_members' };
+    }
+    
+    for (const [userId, member] of level5Members) {
         if (isUserPardoned(userId)) {
             console.log(`Skipping ${member.displayName} - pardoned this month`);
+            pardonedList.push(member.displayName);
             continue;
         }
         
         const monthlyCount = getUserMonthlyFeedback(userId);
         
-        // If user hasn't met monthly requirement, purge them
         if (monthlyCount < MONTHLY_FEEDBACK_REQUIREMENT) {
             try {
-                // Send DM notification before kicking
                 try {
                     const dmChannel = await member.createDM();
                     const embed = new EmbedBuilder()
@@ -551,43 +507,48 @@ async function performMonthlyPurge(guild) {
                     console.log(`Could not send purge notification DM to ${member.displayName}`);
                 }
                 
-                // Kick the user from the server
                 await member.kick('Monthly feedback requirement not met - automatic purge');
                 
                 purgedCount++;
-                purgedUsers.push(member.displayName);
+                purgedUsers.push(`${member.displayName} (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
                 console.log(`Kicked ${member.displayName} for insufficient monthly feedback (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
                 
             } catch (error) {
                 console.error(`Failed to kick ${member.displayName}:`, error);
             }
+        } else {
+            exemptUsers.push(`${member.displayName} (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
         }
     }
     
-    // Log summary
-    console.log(`Monthly purge completed: ${purgedCount} readers kicked from server for inactivity`);
+    console.log(`Monthly purge completed: ${purgedCount} Level 5 members kicked from server for inactivity`);
     if (purgedUsers.length > 0) {
         console.log(`Kicked users: ${purgedUsers.join(', ')}`);
     }
     
-    return { purgedCount, purgedUsers };
+    return { 
+        success: true, 
+        purgedCount, 
+        purgedUsers, 
+        pardonedUsers: pardonedList, 
+        exemptUsers,
+        totalLevel5: level5Members.size
+    };
 }
 
 function scheduleMonthlyPurge(guild) {
     setInterval(async () => {
         const now = new Date();
-        // Run on the 1st of each month at 00:01
         if (now.getDate() === 1 && now.getHours() === 0 && now.getMinutes() <= 5) {
             await performMonthlyPurge(guild);
         }
-    }, 5 * 60 * 1000); // Check every 5 minutes
+    }, 5 * 60 * 1000);
 }
 
 // ===== USER RESET FUNCTION =====
 async function resetUserProgress(userId, guild) {
     console.log(`Resetting all progress for user ${userId}`);
     
-    // COMPLETE DATA WIPE
     if (monthlyFeedback[userId]) {
         delete monthlyFeedback[userId];
     }
@@ -596,7 +557,6 @@ async function resetUserProgress(userId, guild) {
         delete userData[userId];
     }
     
-    // Remove from logged messages
     Object.keys(loggedFeedbackMessages).forEach(messageId => {
         if (loggedFeedbackMessages[messageId] && loggedFeedbackMessages[messageId].includes(userId)) {
             loggedFeedbackMessages[messageId] = loggedFeedbackMessages[messageId].filter(id => id !== userId);
@@ -606,7 +566,6 @@ async function resetUserProgress(userId, guild) {
         }
     });
     
-    // Close their bookshelf threads
     const closedThreads = await closeUserBookshelfThreads(guild, userId);
     
     await saveData();
@@ -686,9 +645,8 @@ async function loadData() {
         loggedFeedbackMessages = parsed.loggedFeedbackMessages || {};
         pardonedUsers = parsed.pardonedUsers || {};
         
-        // Clean up data on load
         for (const userId in userData) {
-            getUserData(userId); // This will fix any missing/invalid properties
+            getUserData(userId);
         }
         
         console.log('Data loaded successfully');
@@ -705,7 +663,7 @@ async function loadData() {
 async function closeUserBookshelfThreads(guild, userId) {
     try {
         const bookshelfForum = guild.channels.cache.find(channel => 
-            channel.name === 'bookshelf' && channel.type === 15 // GUILD_FORUM
+            channel.name === 'bookshelf' && channel.type === 15
         );
         
         if (!bookshelfForum) return 0;
@@ -757,15 +715,11 @@ async function setupBookshelfPermissions(guild) {
             return false;
         }
         
-        // Deny thread creation for everyone by default
         await bookshelfForum.permissionOverwrites.edit(guild.id, {
             CreatePublicThreads: false,
             CreatePrivateThreads: false
         });
         
-        // Allow thread creation only for users with BOTH roles
-        // Note: Discord doesn't support "AND" logic for multiple roles directly
-        // So this will allow anyone with either role - we'll handle the logic in the bot
         await bookshelfForum.permissionOverwrites.edit(shelfRole.id, {
             CreatePublicThreads: true,
             CreatePrivateThreads: false
@@ -787,7 +741,7 @@ async function processFeedbackContribution(userId) {
     
     const user = getUserData(userId);
     user.totalFeedbackAllTime += 1;
-    user.currentCredits += 1; // Add 1 credit for each feedback
+    user.currentCredits += 1;
     
     await saveData();
     
@@ -815,7 +769,6 @@ function createFeedbackEmbed(user, feedbackData) {
 // ===== FIND USER'S LATEST MESSAGE =====
 async function findUserLatestMessage(channel, userId) {
     try {
-        // Fetch recent messages and find the user's most recent non-command message
         const messages = await channel.messages.fetch({ limit: 100 });
         const userMessages = messages.filter(msg => 
             msg.author.id === userId && 
@@ -829,7 +782,6 @@ async function findUserLatestMessage(channel, userId) {
             return null;
         }
         
-        // Get the most recent message (first in the collection since it's sorted by newest first)
         const latestMessage = userMessages.first();
         console.log(`Found latest message for user ${userId}: "${latestMessage.content.substring(0, 50)}..."`);
         return latestMessage;
@@ -908,21 +860,12 @@ const commands = [
     
     new SlashCommandBuilder()
         .setName('pardon')
-        .setDescription('Pardon a reader from monthly feedback requirement (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('Reader to pardon from this month\'s requirement').setRequired(true)),
+        .setDescription('Pardon a Level 5 member from monthly feedback requirement (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('Level 5 member to pardon from this month\'s requirement').setRequired(true)),
     
     new SlashCommandBuilder()
         .setName('manual_purge')
-        .setDescription('Manually trigger monthly purge of inactive readers (Server Owner only)'),
-
-    new SlashCommandBuilder()
-        .setName('test_welcome')
-        .setDescription('Test the welcome system (Staff only)')
-        .addUserOption(option => 
-            option.setName('user')
-                .setDescription('User to test welcome message for (defaults to yourself)')
-                .setRequired(false)
-        )
+        .setDescription('Manually trigger monthly purge of inactive Level 5 members (Server Owner only)')
 ];
 
 async function registerCommands() {
@@ -945,11 +888,19 @@ client.once('ready', async () => {
     // Initialize welcome system
     welcomeSystem.init();
     
-    // Start monthly purge scheduler for all guilds
-    client.guilds.cache.forEach(guild => {
+    // Force fetch all guild members to populate cache on startup
+    for (const guild of client.guilds.cache.values()) {
+        try {
+            await guild.members.fetch();
+            console.log(`Fetched ${guild.members.cache.size} members for ${guild.name}`);
+        } catch (error) {
+            console.error(`Failed to fetch members for ${guild.name}:`, error);
+        }
+        
+        // Start monthly purge scheduler
         scheduleMonthlyPurge(guild);
         console.log(`Monthly purge scheduler started for guild: ${guild.name}`);
-    });
+    }
 });
 
 client.on('guildMemberRemove', async (member) => {
@@ -964,21 +915,17 @@ client.on('guildBanAdd', async (ban) => {
 
 // ===== THREAD CREATION HANDLER =====
 client.on('threadCreate', async (thread) => {
-    // Check if this is a bookshelf forum thread
     if (thread.parent && thread.parent.name === 'bookshelf') {
         console.log(`New bookshelf thread created: ${thread.name} by ${thread.ownerId}`);
         
         try {
             const member = await thread.guild.members.fetch(thread.ownerId);
             
-            // Check if user has both required roles
             if (!canCreateBookshelfThread(member)) {
                 console.log(`User ${member.displayName} lacks required roles for bookshelf thread`);
                 
-                // Delete the thread
                 await thread.delete();
                 
-                // Send DM to user explaining why
                 try {
                     const dmChannel = await member.createDM();
                     const channels = getClickableChannelMentions(thread.guild);
@@ -1006,8 +953,6 @@ client.on('threadCreate', async (thread) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // Only allow thread owners to post in bookshelf threads, but don't handle credits here
-    // Credits are handled by /post_chapter command
     if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
         const isThreadOwner = message.channel.ownerId === message.author.id;
         
@@ -1015,11 +960,9 @@ client.on('messageCreate', async (message) => {
             await message.delete();
             await sendBookshelfAccessDeniedDM(message.author, 'thread_owner', null, message.member);
         }
-        // If thread owner, allow the message but don't process credits
         return;
     }
 
-    // Handle traditional commands
     if (message.content.startsWith('!')) {
         await handleCommand(message);
         return;
@@ -1039,7 +982,6 @@ client.on('interactionCreate', async (interaction) => {
 
 // ===== MESSAGE HANDLERS =====
 async function sendBookshelfAccessDeniedDM(author, reason, user = null, member = null) {
-    // Get guild reference from member
     const guild = member?.guild;
     const channels = guild ? getClickableChannelMentions(guild) : {
         bookshelfFeedback: '#bookshelf-feedback',
@@ -1139,8 +1081,7 @@ async function handleSlashCommand(interaction) {
         buy: () => handleBuySlashCommand(interaction),
         setup_bookshelf: () => handleSetupBookshelfSlashCommand(interaction),
         pardon: () => handlePardonSlashCommand(interaction),
-        manual_purge: () => handleManualPurgeSlashCommand(interaction),
-        test_welcome: () => handleTestWelcomeSlashCommand(interaction)
+        manual_purge: () => handleManualPurgeSlashCommand(interaction)
     };
     
     const handler = commandHandlers[interaction.commandName];
@@ -1163,11 +1104,35 @@ async function handleFeedbackSlashCommand(interaction) {
 async function processFeedbackCommand(user, member, channel, isSlash, interaction = null) {
     console.log(`Processing feedback command for ${user.displayName} in ${channel.name}`);
     
-    // Get guild reference and clickable channel mentions
+    // Ensure member object is fresh (re-fetch if needed)
+    try {
+        member = await channel.guild.members.fetch(user.id);
+    } catch (error) {
+        console.log('Could not fetch member, using existing member object');
+    }
+    
+    // Check if user has Level 5 role
+    if (!hasLevel5Role(member)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Level 5 Role Required ☝️')
+            .setDescription('I regret to inform you that only those who have achieved Level 5 status may log feedback credits in our distinguished community.')
+            .addFields({
+                name: 'How to Gain Access',
+                value: 'Continue participating in the server activities and earning experience to reach Level 5 status.',
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        if (isSlash) {
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
+        }
+    }
+    
     const guild = channel.guild;
     const channels = getClickableChannelMentions(guild);
     
-    // Check if command is used in correct threads
     if (!isInAllowedFeedbackThread(channel)) {
         const embed = new EmbedBuilder()
             .setTitle('Incorrect Thread ☝️')
@@ -1186,7 +1151,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         }
     }
     
-    // Check if this is the user's own thread (prevent self-feedback logging)
     if (channel.isThread() && channel.ownerId === user.id) {
         const embed = new EmbedBuilder()
             .setTitle('Cannot Log Own Thread Feedback ☝️')
@@ -1205,7 +1169,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         }
     }
     
-    // Find user's most recent message in this channel
     const latestMessage = await findUserLatestMessage(channel, user.id);
     
     if (!latestMessage) {
@@ -1216,11 +1179,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
                 name: 'How to Properly Use This System',
                 value: '1. **First:** Write a thoughtful feedback message in this thread\n2. **Then:** Use `/feedback` command to log that message for credits\n3. **Note:** Commands like `/feedback` itself do not count as feedback messages',
                 inline: false
-            },
-            {
-                name: 'What Counts as Feedback',
-                value: '• Constructive critique of another writer\'s work\n• Thoughtful analysis and suggestions\n• Meaningful discussion about writing techniques\n• **Not commands, short replies, or non-feedback messages**',
-                inline: false
             })
             .setColor(0xFF9900);
         
@@ -1231,26 +1189,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         }
     }
     
-    // Additional validation: message must be substantial (at least 20 characters)
-    if (latestMessage.content.length < 20) {
-        const embed = new EmbedBuilder()
-            .setTitle('Feedback Too Brief ☝️')
-            .setDescription('I regret to inform you that your most recent message appears too brief to qualify as meaningful feedback, dear writer.')
-            .addFields({
-                name: 'Quality Standards',
-                value: '• Feedback messages should be **thoughtful and substantial**\n• Provide specific critique, suggestions, or analysis\n• Short replies like "good job" or "nice" do not qualify\n• Aim for detailed, constructive feedback',
-                inline: false
-            })
-            .setColor(0xFF9900);
-        
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
-        }
-    }
-    
-    // Check if this message has already been logged
     if (hasUserLoggedFeedbackForMessage(latestMessage.id, user.id)) {
         const embed = new EmbedBuilder()
             .setTitle('Feedback Already Logged ☝️')
@@ -1269,7 +1207,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         }
     }
     
-    // Log the feedback
     logFeedbackForMessage(latestMessage.id, user.id);
     
     const feedbackData = await processFeedbackContribution(user.id);
@@ -1296,11 +1233,9 @@ async function handlePostChapterSlashCommand(interaction) {
 }
 
 async function processPostChapterCommand(user, member, channel, isSlash, interaction = null) {
-    // Get guild reference and clickable channel mentions
     const guild = channel.guild;
     const channels = getClickableChannelMentions(guild);
     
-    // Check if in bookshelf thread
     if (!channel.isThread() || !channel.parent || channel.parent.name !== 'bookshelf') {
         const embed = new EmbedBuilder()
             .setTitle('Wrong Thread ☝️')
@@ -1319,7 +1254,6 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
         }
     }
     
-    // Check if user is the thread owner
     if (channel.ownerId !== user.id) {
         const embed = new EmbedBuilder()
             .setTitle('Thread Owner Only ☝️')
@@ -1336,14 +1270,20 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
     const userId = user.id;
     const userRecord = getUserData(userId);
     
-    // Check if user has both required roles
-    if (!canPostInBookshelf(userId, member)) {
+    // Check each requirement individually for better error messages
+    const hasEnoughFeedback = userRecord.totalFeedbackAllTime >= MINIMUM_FEEDBACK_FOR_SHELF;
+    const hasShelfPurchase = userRecord.purchases.includes('shelf');
+    const hasShelfOwnerRole = hasShelfRole(member);
+    const hasReaderRoleCheck = hasReaderRole(member);
+    
+    // Check feedback requirement first
+    if (!hasEnoughFeedback) {
         const embed = new EmbedBuilder()
-            .setTitle('Required Roles Missing ☝️')
-            .setDescription('I regret to inform you that posting chapters requires both the Shelf Owner role and the reader role, dear writer.')
+            .setTitle('Insufficient Total Feedback ☝️')
+            .setDescription(`I regret to inform you that you need at least ${MINIMUM_FEEDBACK_FOR_SHELF} total feedback credits to post chapters, dear writer.`)
             .addFields({
-                name: 'Your Current Status',
-                value: `• Shelf Owner: ${hasShelfRole(member) ? '✅' : '❌'}\n• reader role: ${hasReaderRole(member) ? '✅' : '❌'}`,
+                name: 'Your Status',
+                value: `• **Total feedback earned:** ${userRecord.totalFeedbackAllTime}\n• **Required:** ${MINIMUM_FEEDBACK_FOR_SHELF}`,
                 inline: false
             })
             .setColor(0xFF9900);
@@ -1355,7 +1295,50 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
         }
     }
     
-    // Check if user has credits
+    // Check if shelf access was purchased
+    if (!hasShelfPurchase) {
+        const embed = new EmbedBuilder()
+            .setTitle('Shelf Access Not Purchased ☝️')
+            .setDescription('I regret to inform you that you must first purchase Shelf Owner access from the store, dear writer.')
+            .addFields({
+                name: 'How to Purchase',
+                value: `Use \`/store\` to view items and \`/buy shelf\` to purchase shelf access for 1 credit.`,
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        if (isSlash) {
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            return await replyTemporaryMessage(message, { embeds: [embed] });
+        }
+    }
+    
+    // Check roles last (this was the original bug - roles check came first)
+    if (!hasShelfOwnerRole || !hasReaderRoleCheck) {
+        const embed = new EmbedBuilder()
+            .setTitle('Required Roles Missing ☝️')
+            .setDescription('I regret to inform you that posting chapters requires both the Shelf Owner role and the reader role, dear writer.')
+            .addFields({
+                name: 'Your Current Status',
+                value: `• Shelf Owner: ${hasShelfOwnerRole ? '✅' : '❌'}\n• reader role: ${hasReaderRoleCheck ? '✅' : '❌'}`,
+                inline: false
+            },
+            {
+                name: 'Next Steps',
+                value: hasShelfOwnerRole ? 'Contact staff to request the reader role based on your feedback quality.' : 'Purchase Shelf Owner role from `/store` and contact staff for reader role.',
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        if (isSlash) {
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            return await replyTemporaryMessage(message, { embeds: [embed] });
+        }
+    }
+    
+    // Check credits last
     if (userRecord.currentCredits < 1) {
         const embed = new EmbedBuilder()
             .setTitle('Insufficient Credits ☝️')
@@ -1374,7 +1357,7 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
         }
     }
     
-    // Spend the credit and update posts count
+    // All requirements met - process the chapter posting
     spendCredits(userId, 1);
     userRecord.bookshelfPosts += 1;
     await saveData();
@@ -1402,7 +1385,7 @@ async function handleManualPurgeCommand(message) {
         return replyTemporaryMessage(message, 'I regret to inform you that this sacred power is reserved exclusively for the server owner, my lord. Such grave authority cannot be delegated.');
     }
     
-    const result = await performManualPurge(message.guild);
+    const result = await performMonthlyPurge(message.guild);
     const embed = createPurgeResultEmbed(result);
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
@@ -1416,97 +1399,16 @@ async function handleManualPurgeSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    const result = await performManualPurge(interaction.guild);
+    const result = await performMonthlyPurge(interaction.guild);
     const embed = createPurgeResultEmbed(result);
     await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function performManualPurge(guild) {
-    console.log('Manual purge initiated by server owner...');
-    
-    const readerRole = guild.roles.cache.find(r => r.name === 'reader');
-    if (!readerRole) {
-        console.log('reader role not found for manual purge');
-        return { success: false, reason: 'no_reader_role' };
-    }
-    
-    let purgedCount = 0;
-    const purgedUsers = [];
-    const pardonedUsers = [];
-    const exemptUsers = [];
-    
-    // Get all members with reader role
-    const readersWithRole = guild.members.cache.filter(member => 
-        member.roles.cache.has(readerRole.id)
-    );
-    
-    for (const [userId, member] of readersWithRole) {
-        // Skip if user is pardoned this month
-        if (isUserPardoned(userId)) {
-            console.log(`Skipping ${member.displayName} - pardoned this month`);
-            pardonedUsers.push(member.displayName);
-            continue;
-        }
-        
-        const monthlyCount = getUserMonthlyFeedback(userId);
-        
-        // If user hasn't met monthly requirement, purge them
-        if (monthlyCount < MONTHLY_FEEDBACK_REQUIREMENT) {
-            try {
-                // Send DM notification before kicking
-                try {
-                    const dmChannel = await member.createDM();
-                    const embed = new EmbedBuilder()
-                        .setTitle('Monthly Requirement Not Met - Server Removal ☝️')
-                        .setDescription(`Dear ${member.displayName}, I regret to inform you that you are being removed from the server due to insufficient feedback contributions this month.`)
-                        .addFields(
-                            { name: 'Your Monthly Contributions', value: `${monthlyCount} feedback credits`, inline: true },
-                            { name: 'Required Amount', value: `${MONTHLY_FEEDBACK_REQUIREMENT} feedback credits`, inline: true },
-                            { name: 'What This Means', value: '• You are being kicked from the server\n• You may rejoin if invited again\n• Your progress will be reset upon rejoining', inline: false },
-                            { name: 'How to Avoid This in Future', value: '1. Provide thoughtful feedback to fellow writers\n2. Log your contributions with `/feedback`\n3. Meet the monthly requirement of 2 feedback credits', inline: false }
-                        )
-                        .setColor(0xFF6B6B);
-                    
-                    await dmChannel.send({ embeds: [embed] });
-                } catch (dmError) {
-                    console.log(`Could not send purge notification DM to ${member.displayName}`);
-                }
-                
-                // Kick the user from the server
-                await member.kick('Monthly feedback requirement not met - manual purge by server owner');
-                
-                purgedCount++;
-                purgedUsers.push(`${member.displayName} (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
-                console.log(`Kicked ${member.displayName} for insufficient monthly feedback (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
-                
-            } catch (error) {
-                console.error(`Failed to kick ${member.displayName}:`, error);
-            }
-        } else {
-            exemptUsers.push(`${member.displayName} (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
-        }
-    }
-    
-    // Log summary
-    console.log(`Manual purge completed: ${purgedCount} readers kicked from server`);
-    if (purgedUsers.length > 0) {
-        console.log(`Kicked users: ${purgedUsers.join(', ')}`);
-    }
-    
-    return { 
-        success: true, 
-        purgedCount, 
-        purgedUsers, 
-        pardonedUsers, 
-        exemptUsers,
-        totalReaders: readersWithRole.size
-    };
 }
 
 function createPurgeResultEmbed(result) {
     if (!result.success) {
         const errorMessages = {
-            no_reader_role: 'I regret to inform you that no reader role could be found in this server. The purge cannot proceed without this essential role.'
+            not_active_yet: 'I regret to inform you that the monthly purge system is not yet active. It shall commence on July 1st, 2025.',
+            no_level5_members: 'I regret to inform you that no Level 5 members could be found in this server. The purge cannot proceed without eligible members.'
         };
         
         return new EmbedBuilder()
@@ -1517,17 +1419,16 @@ function createPurgeResultEmbed(result) {
     
     const embed = new EmbedBuilder()
         .setTitle('Manual Purge Completed ☝️')
-        .setDescription(`The monthly purge has been executed at your command, my lord. I have reviewed all readers and taken appropriate action based on their contributions.`)
+        .setDescription(`The monthly purge has been executed at your command, my lord. I have reviewed all Level 5 members and taken appropriate action based on their contributions.`)
         .addFields(
-            { name: 'Total Readers Reviewed', value: `${result.totalReaders} members`, inline: true },
-            { name: 'Readers Removed', value: `${result.purgedCount} members`, inline: true },
+            { name: 'Total Level 5 Members Reviewed', value: `${result.totalLevel5} members`, inline: true },
+            { name: 'Members Removed', value: `${result.purgedCount} members`, inline: true },
             { name: 'Pardoned This Month', value: `${result.pardonedUsers.length} members`, inline: true }
         )
         .setColor(result.purgedCount > 0 ? 0xFF6B6B : 0x00AA55);
     
-    // Add details if there were purged users
     if (result.purgedUsers.length > 0) {
-        const purgedList = result.purgedUsers.slice(0, 10).join('\n'); // Limit to 10 to avoid embed limits
+        const purgedList = result.purgedUsers.slice(0, 10).join('\n');
         const additionalCount = result.purgedUsers.length > 10 ? `\n...and ${result.purgedUsers.length - 10} more` : '';
         
         embed.addFields({
@@ -1537,9 +1438,8 @@ function createPurgeResultEmbed(result) {
         });
     }
     
-    // Add pardoned users if any
     if (result.pardonedUsers.length > 0) {
-        const pardonedList = result.pardonedUsers.slice(0, 5).join('\n'); // Limit to 5
+        const pardonedList = result.pardonedUsers.slice(0, 5).join('\n');
         const additionalPardoned = result.pardonedUsers.length > 5 ? `\n...and ${result.pardonedUsers.length - 5} more` : '';
         
         embed.addFields({
@@ -1549,11 +1449,10 @@ function createPurgeResultEmbed(result) {
         });
     }
     
-    // Add exempt users count
     if (result.exemptUsers.length > 0) {
         embed.addFields({
             name: 'Members Meeting Requirements',
-            value: `${result.exemptUsers.length} readers have fulfilled their monthly obligations and remain in good standing.`,
+            value: `${result.exemptUsers.length} Level 5 members have fulfilled their monthly obligations and remain in good standing.`,
             inline: false
         });
     }
@@ -1640,11 +1539,10 @@ async function handleHallOfFameSlashCommand(interaction) {
 }
 
 async function createHallOfFameEmbed(guild) {
-    // Get all users with feedback credits and sort them
     const usersWithCredits = Object.entries(userData)
         .filter(([userId, data]) => data.totalFeedbackAllTime > 0)
         .sort(([, a], [, b]) => b.totalFeedbackAllTime - a.totalFeedbackAllTime)
-        .slice(0, 10); // Top 10
+        .slice(0, 10);
     
     if (usersWithCredits.length === 0) {
         return new EmbedBuilder()
@@ -1662,7 +1560,6 @@ async function createHallOfFameEmbed(guild) {
             const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
             leaderboard += `${medal} **${member.displayName}** - ${data.totalFeedbackAllTime} credit${data.totalFeedbackAllTime !== 1 ? 's' : ''}\n`;
         } catch (error) {
-            // Skip users who are no longer in the guild
             continue;
         }
     }
@@ -1755,7 +1652,6 @@ async function processPurchase(userId, itemKey, member, guild) {
 }
 
 async function assignPurchaseRoles(member, guild, itemKey) {
-    // Only assign Shelf Owner role - reader role must be assigned by staff
     const roleNames = [STORE_ITEMS[itemKey].role];
     
     for (const roleName of roleNames) {
@@ -1764,7 +1660,7 @@ async function assignPurchaseRoles(member, guild, itemKey) {
         let role = guild.roles.cache.find(r => r.name === roleName);
         if (!role) {
             try {
-                const roleColor = 0x8B4513; // Brown color for Shelf Owner
+                const roleColor = 0x8B4513;
                 role = await guild.roles.create({
                     name: roleName,
                     color: roleColor,
@@ -1860,7 +1756,7 @@ async function addFeedbackToUser(userId, amount) {
     
     const userRecord = getUserData(userId);
     userRecord.totalFeedbackAllTime += amount;
-    userRecord.currentCredits += amount; // Also add to current credits
+    userRecord.currentCredits += amount;
     
     await saveData();
     return { currentCount, newCount };
@@ -1917,7 +1813,6 @@ async function removeFeedbackFromUser(userId, amount) {
     
     console.log(`Removing ${amount} credits from user ${userId}. Previous: ${previousCredits}`);
     
-    // Only reduce current credits, not total feedback or monthly count
     userRecord.currentCredits = Math.max(0, userRecord.currentCredits - amount);
     
     console.log(`New credit balance: ${userRecord.currentCredits}`);
@@ -1970,20 +1865,17 @@ async function performCompleteReset(userId, guild) {
     const previousAllTime = userRecord.totalFeedbackAllTime;
     const hadShelfAccess = userRecord.purchases.includes('shelf');
     
-    // COMPLETE RESET
     setUserMonthlyFeedback(userId, 0);
     userRecord.totalFeedbackAllTime = 0;
     userRecord.currentCredits = 0;
     userRecord.bookshelfPosts = 0;
     userRecord.purchases = userRecord.purchases.filter(item => item !== 'shelf');
     
-    // Remove Shelf Owner role (reader role is managed by staff separately)
     const targetMember = guild.members.cache.get(userId);
     if (targetMember) {
         await removeUserRoles(targetMember, guild);
     }
     
-    // Close threads
     const closedThreads = await closeUserBookshelfThreads(guild, userId);
     
     await saveData();
@@ -1997,7 +1889,6 @@ async function performCompleteReset(userId, guild) {
 }
 
 async function removeUserRoles(member, guild) {
-    // Only remove Shelf Owner role - reader role is managed by staff
     const rolesToRemove = ['Shelf Owner'];
     
     for (const roleName of rolesToRemove) {
@@ -2035,11 +1926,11 @@ async function handlePardonCommand(message, args) {
     }
     
     const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the reader you wish to pardon from this month\'s feedback requirement.');
+    if (!user) return replyTemporaryMessage(message, 'Pray, mention the Level 5 member you wish to pardon from this month\'s feedback requirement.');
     
     const member = message.guild.members.cache.get(user.id);
-    if (!member || !hasReaderRole(member)) {
-        return replyTemporaryMessage(message, 'I regret that the mentioned user does not possess the reader role and thus requires no pardon.');
+    if (!member || !hasLevel5Role(member)) {
+        return replyTemporaryMessage(message, 'I regret that the mentioned user does not possess the Level 5 role and thus requires no pardon.');
     }
     
     pardonUser(user.id);
@@ -2057,10 +1948,10 @@ async function handlePardonSlashCommand(interaction) {
     const user = interaction.options.getUser('user');
     const member = interaction.guild.members.cache.get(user.id);
     
-    if (!member || !hasReaderRole(member)) {
+    if (!member || !hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
             .setTitle('Invalid Target')
-            .setDescription('I regret that the mentioned user does not possess the reader role and thus requires no pardon.')
+            .setDescription('I regret that the mentioned user does not possess the Level 5 role and thus requires no pardon.')
             .setColor(0xFF9900);
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
@@ -2108,66 +1999,48 @@ async function handleStatsSlashCommand(interaction) {
 
 async function createStatsEmbed(guild) {
     const totalMembers = guild.memberCount;
-    const verifiedCount = Object.keys(userData).length;
     
-    const monthKey = getCurrentMonthKey();
+    // Get all Level 5 members
+    const level5Members = guild.members.cache.filter(member => hasLevel5Role(member));
+    const totalLevel5 = level5Members.size;
+    
     let monthlyContributors = 0;
-    for (const [userId, userMonthlyData] of Object.entries(monthlyFeedback)) {
-        if (userMonthlyData[monthKey] && userMonthlyData[monthKey] > 0) {
+    let fulfillmentList = '';
+    let nonFulfillmentList = '';
+    let pardonedList = '';
+    let pardonedCount = 0;
+    
+    // Process each Level 5 member
+    level5Members.forEach((member, userId) => {
+        const monthlyCount = getUserMonthlyFeedback(userId);
+        const isPardoned = isUserPardoned(userId);
+        const status = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅' : '❌';
+        
+        if (monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT) {
             monthlyContributors++;
         }
-    }
-    
-    const contributionRate = verifiedCount > 0 ? Math.round((monthlyContributors / verifiedCount) * 100) : 0;
-    
-    // Get reader role status
-    const readerRole = guild.roles.cache.find(r => r.name === 'reader');
-    let readerStats = '• No reader role found';
-    let readerDetails = '';
-    
-    if (readerRole) {
-        const readersWithRole = guild.members.cache.filter(member => 
-            member.roles.cache.has(readerRole.id)
-        );
         
-        let fulfillmentList = '';
-        let nonFulfillmentList = '';
-        let pardonedList = '';
-        
-        for (const [userId, member] of readersWithRole) {
-            const monthlyCount = getUserMonthlyFeedback(userId);
-            const isPardoned = isUserPardoned(userId);
-            const status = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅' : '❌';
-            
-            if (isPardoned) {
-                pardonedList += `${status} **${member.displayName}** (${monthlyCount}) - *Pardoned*\n`;
-            } else if (monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT) {
-                fulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
-            } else {
-                nonFulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
-            }
+        if (isPardoned) {
+            pardonedCount++;
+            pardonedList += `${status} **${member.displayName}** (${monthlyCount}) - *Pardoned*\n`;
+        } else if (monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT) {
+            fulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
+        } else {
+            nonFulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
         }
-        
-        const totalReaders = readersWithRole.size;
-        const fulfillmentCount = readersWithRole.filter(([userId]) => 
-            getUserMonthlyFeedback(userId) >= MONTHLY_FEEDBACK_REQUIREMENT
-        ).size;
-        const pardonedCount = readersWithRole.filter(([userId]) => 
-            isUserPardoned(userId)
-        ).size;
-        
-        readerStats = `• **${totalReaders}** total readers\n• **${fulfillmentCount}** meeting requirements\n• **${pardonedCount}** pardoned this month`;
-        
-        // Combine all reader details
-        readerDetails = '';
-        if (fulfillmentList) readerDetails += fulfillmentList;
-        if (pardonedList) readerDetails += pardonedList;
-        if (nonFulfillmentList) readerDetails += nonFulfillmentList;
-        
-        if (!readerDetails) readerDetails = '• No readers found';
-        if (readerDetails.length > 1024) {
-            readerDetails = readerDetails.substring(0, 1000) + '...\n*(List truncated)*';
-        }
+    });
+    
+    const contributionRate = totalLevel5 > 0 ? Math.round((monthlyContributors / totalLevel5) * 100) : 0;
+    
+    // Combine all level 5 member details
+    let level5Details = '';
+    if (fulfillmentList) level5Details += fulfillmentList;
+    if (pardonedList) level5Details += pardonedList;
+    if (nonFulfillmentList) level5Details += nonFulfillmentList;
+    
+    if (!level5Details) level5Details = '• No Level 5 members found';
+    if (level5Details.length > 1024) {
+        level5Details = level5Details.substring(0, 1000) + '...\n*(List truncated)*';
     }
     
     const embed = new EmbedBuilder()
@@ -2175,16 +2048,16 @@ async function createStatsEmbed(guild) {
         .setDescription('Allow me to present the current state of our literary realm, as observed from my position of humble service.')
         .addFields(
             { name: 'Total Writers in Our Halls', value: `${totalMembers} souls`, inline: true },
-            { name: 'Writers Under My Watch', value: `${verifiedCount} tracked`, inline: true },
+            { name: 'Level 5 Members Tracked', value: `${totalLevel5} writers`, inline: true },
             { name: 'Active Contributors This Month', value: `${monthlyContributors} writers`, inline: true },
             { name: 'Monthly Participation Rate', value: `${contributionRate}%`, inline: true },
             { name: 'Community Health', value: contributionRate >= 70 ? '✅ Flourishing' : contributionRate >= 50 ? '⚠️ Moderate' : '🔴 Requires attention', inline: true },
-            { name: 'Current Month', value: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }), inline: true },
-            { name: 'Reader Overview', value: readerStats, inline: false },
-            { name: 'Reader Detailed Status', value: readerDetails, inline: false }
+            { name: 'Pardoned This Month', value: `${pardonedCount} members`, inline: true },
+            { name: 'Overview', value: `• **${totalLevel5}** total Level 5 members\n• **${monthlyContributors}** meeting requirements\n• **${pardonedCount}** pardoned this month`, inline: false },
+            { name: 'Detailed Status', value: level5Details, inline: false }
         )
         .setColor(contributionRate >= 70 ? 0x00AA55 : contributionRate >= 50 ? 0xFF9900 : 0xFF4444)
-        .setFooter({ text: 'Monthly purge kicks inactive readers since July 2025 • ✅ = Meeting requirement • ❌ = Below requirement' });
+        .setFooter({ text: 'Monthly purge kicks inactive Level 5 members since July 2025 • ✅ = Meeting requirement • ❌ = Below requirement' });
     
     return embed;
 }
@@ -2271,7 +2144,7 @@ function createAllCommandsEmbed() {
             },
             { 
                 name: '👑 Staff: Server Administration', 
-                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Configure bookshelf forum permissions\n`/pardon` - Pardon a reader from monthly feedback requirement\n`/manual_purge` - Manually trigger monthly purge (Server Owner only)\n`/test_welcome` - Test the welcome system', 
+                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Configure bookshelf forum permissions\n`/pardon` - Pardon a Level 5 member from monthly feedback requirement\n`/manual_purge` - Manually trigger monthly purge (Server Owner only)', 
                 inline: false 
             }
         )
@@ -2324,45 +2197,6 @@ function createHelpEmbed(guild) {
         )
         .setColor(0x5865F2)
         .setFooter({ text: 'Your humble servant in all matters literary and administrative' });
-}
-
-// Add the test welcome command handler
-async function handleTestWelcomeSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        const embed = new EmbedBuilder()
-            .setTitle('Insufficient Authority')
-            .setDescription('Testing functions are reserved for staff members.')
-            .setColor(0xFF6B6B);
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
-    
-    const targetUser = interaction.options.getUser('user') || interaction.user;
-    
-    await interaction.deferReply({ ephemeral: true });
-    
-    try {
-        const success = await welcomeSystem.testWelcome(interaction.guild, targetUser.id);
-        
-        const embed = new EmbedBuilder()
-            .setTitle('Welcome System Test')
-            .setDescription(`Test completed for ${targetUser.displayName}`)
-            .addFields({
-                name: 'Result',
-                value: success ? '✅ Success' : '❌ Failed',
-                inline: false
-            })
-            .setColor(success ? 0x00AA55 : 0xFF6B6B);
-        
-        await interaction.editReply({ embeds: [embed] });
-        
-    } catch (error) {
-        const embed = new EmbedBuilder()
-            .setTitle('Test Error')
-            .setDescription(`Test failed: ${error.message}`)
-            .setColor(0xFF6B6B);
-        
-        await interaction.editReply({ embeds: [embed] });
-    }
 }
 
 // ===== ERROR HANDLERS =====
