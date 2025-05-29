@@ -27,11 +27,264 @@ const ALLOWED_FEEDBACK_THREADS = ['bookshelf-feedback', 'bookshelf-discussion'];
 const MONTHLY_FEEDBACK_REQUIREMENT = 2;
 const MINIMUM_FEEDBACK_FOR_SHELF = 2; // Changed from 1 to 2
 
+// Welcome system configuration
+const WELCOME_CONFIG = {
+    channelNames: ['welcome', 'general', 'arrivals'],
+    categoryNames: ['welcome', 'general'],
+    embed: {
+        color: 0x5865F2,
+        title: 'Welcome to Type&Draft! ☝️',
+        thumbnail: true,
+        timestamp: true,
+        footer: true
+    }
+};
+
 // ===== DATA STORAGE =====
 let monthlyFeedback = {};
 let userData = {};
 let loggedFeedbackMessages = {}; // Track which messages have had feedback logged
 let pardonedUsers = {}; // Track users pardoned from monthly requirements
+
+// ===== WELCOME SYSTEM CLASS =====
+class WelcomeSystem {
+    constructor(client) {
+        this.client = client;
+        this.logger = console;
+    }
+
+    init() {
+        this.client.on('guildMemberAdd', this.handleMemberJoin.bind(this));
+        this.logger.log('✅ Welcome system initialized');
+    }
+
+    async handleMemberJoin(member) {
+        this.logger.log(`👋 Member joined: ${member.displayName} (${member.id}) in ${member.guild.name}`);
+        
+        try {
+            await this.handleRejoiningMember(member);
+            await this.sendWelcomeMessage(member);
+        } catch (error) {
+            this.logger.error(`❌ Welcome system error for ${member.displayName}:`, error);
+            await this.handleWelcomeError(member, error);
+        }
+    }
+
+    async handleRejoiningMember(member) {
+        const userId = member.id;
+        
+        if (userData[userId] || monthlyFeedback[userId]) {
+            this.logger.log(`🔄 Resetting data for rejoining member: ${member.displayName}`);
+            await resetUserProgress(userId, member.guild);
+        }
+    }
+
+    findWelcomeChannel(guild) {
+        // Priority 1: Exact channel name matches
+        for (const channelName of WELCOME_CONFIG.channelNames) {
+            const channel = guild.channels.cache.find(ch => 
+                ch.name === channelName && ch.isTextBased()
+            );
+            if (channel) {
+                this.logger.log(`✅ Found welcome channel: #${channel.name} (exact match)`);
+                return channel;
+            }
+        }
+
+        // Priority 2: Channels within welcome categories
+        for (const categoryName of WELCOME_CONFIG.categoryNames) {
+            const category = guild.channels.cache.find(ch => 
+                ch.type === 4 && ch.name.toLowerCase().includes(categoryName)
+            );
+            
+            if (category) {
+                const channel = category.children.cache.find(ch => ch.isTextBased());
+                if (channel) {
+                    this.logger.log(`✅ Found welcome channel: #${channel.name} (in ${category.name} category)`);
+                    return channel;
+                }
+            }
+        }
+
+        // Priority 3: Any channel with 'welcome' in name
+        const fallbackChannel = guild.channels.cache.find(ch => 
+            ch.name.toLowerCase().includes('welcome') && ch.isTextBased()
+        );
+        
+        if (fallbackChannel) {
+            this.logger.log(`✅ Found welcome channel: #${fallbackChannel.name} (fallback)`);
+            return fallbackChannel;
+        }
+
+        this.logger.warn(`⚠️ No welcome channel found in ${guild.name}`);
+        return null;
+    }
+
+    hasRequiredPermissions(channel) {
+        const permissions = channel.permissionsFor(channel.guild.members.me);
+        const required = ['ViewChannel', 'SendMessages', 'EmbedLinks'];
+        
+        for (const permission of required) {
+            if (!permissions || !permissions.has(permission)) {
+                this.logger.warn(`❌ Missing permission ${permission} in #${channel.name}`);
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    createWelcomeEmbed(member) {
+    const { guild } = member;
+    const config = WELCOME_CONFIG.embed;
+    
+    const channels = getClickableChannelMentions(guild);
+    const rulesChannel = getChannelMention(guild, 'rules');
+    const serverGuideChannel = getChannelMention(guild, 'server-guide');
+    
+    const embed = new EmbedBuilder()
+        .setTitle('A New Bird Joins Our Literary Nest ☝️')
+        .setDescription(`Ah, ${member}... How delightful. Another soul seeks to join our most distinguished gathering of scribes and storytellers. I confess, your arrival brings me considerable pleasure. Welcome, welcome indeed, to Type&Draft - where words are currency and wisdom flows like wine.`)
+        .setColor(config.color);
+
+    embed.addFields([
+        {
+            name: '📜 The Sacred Texts, If You Will',
+            value: `Before we proceed further, dear ${member.displayName}, I must insist - nay, *implore* - that you acquaint yourself with ${rulesChannel} and ${serverGuideChannel}. Knowledge, as they say, is power... and ignorance, well, ignorance has toppled kingdoms.`,
+            inline: false
+        },
+        {
+            name: '🕊️ Your First Steps in Our Realm',
+            value: [
+                '• Seek out our feedback forums - the sacred grounds where we share our thoughts and insights',
+                '• Master the `/help` command - your key to understanding our arrangements',
+                '• Offer your wisdom to fellow writers, and watch your influence grow'
+            ].join('\n'),
+            inline: false
+        },
+        {
+            name: '🗡️ A Word of Counsel',
+            value: `I have served many masters through my long years of serving the realm, and learned this truth; those who give generously of their knowledge, find themselves richly rewarded. Contribute thoughtfully, and perhaps, you too shall join the ranks of our most celebrated literary voices. The choice, as always, remains yours.`,
+            inline: false
+        }
+    ]);
+
+        if (config.thumbnail) {
+            embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true }));
+        }
+
+        if (config.timestamp) {
+            embed.setTimestamp();
+        }
+
+        if (config.footer) {
+            embed.setFooter({
+                text: `Member #${guild.memberCount} • Welcome to Type&Draft`,
+                iconURL: guild.iconURL({ dynamic: true })
+            });
+        }
+
+        return embed;
+    }
+
+    async sendWelcomeMessage(member) {
+        const channel = this.findWelcomeChannel(member.guild);
+        
+        if (!channel) {
+            throw new Error('No suitable welcome channel found');
+        }
+
+        if (!this.hasRequiredPermissions(channel)) {
+            throw new Error(`Insufficient permissions in #${channel.name}`);
+        }
+
+        const embed = this.createWelcomeEmbed(member);
+        
+        try {
+            const message = await channel.send({ embeds: [embed] });
+            
+            this.logger.log(`✅ Welcome message sent for ${member.displayName} in #${channel.name}`);
+            this.logger.log(`📬 Message ID: ${message.id}`);
+            
+            return message;
+            
+        } catch (error) {
+            this.logger.error(`❌ Failed to send welcome message in #${channel.name}:`, error);
+            throw error;
+        }
+    }
+
+    async handleWelcomeError(member, error) {
+        const staffChannels = ['staff', 'admin', 'bot-logs', 'logs', 'errors'];
+        let notificationChannel = null;
+
+        for (const channelName of staffChannels) {
+            notificationChannel = member.guild.channels.cache.find(ch => 
+                ch.name.toLowerCase().includes(channelName) && ch.isTextBased()
+            );
+            if (notificationChannel && this.hasRequiredPermissions(notificationChannel)) {
+                break;
+            }
+        }
+
+        if (!notificationChannel) {
+            this.logger.warn('⚠️ No staff notification channel available');
+            return;
+        }
+
+        const errorEmbed = new EmbedBuilder()
+            .setTitle('⚠️ Welcome System Error')
+            .setDescription(`Failed to welcome new member: ${member.displayName}`)
+            .addFields([
+                { name: 'Member', value: `${member} (${member.id})`, inline: true },
+                { name: 'Joined At', value: member.joinedAt?.toLocaleString() || 'Unknown', inline: true },
+                { name: 'Error Type', value: error.name || 'Unknown', inline: true },
+                { name: 'Error Details', value: `\`\`\`${error.message}\`\`\``, inline: false }
+            ])
+            .setColor(0xFF6B6B)
+            .setTimestamp();
+
+        try {
+            await notificationChannel.send({ embeds: [errorEmbed] });
+            this.logger.log(`📢 Error notification sent to #${notificationChannel.name}`);
+        } catch (notifyError) {
+            this.logger.error('❌ Failed to send error notification:', notifyError);
+        }
+    }
+
+    async testWelcome(guild, userId) {
+        try {
+            const member = await guild.members.fetch(userId);
+            this.logger.log(`🧪 Testing welcome system for ${member.displayName}`);
+            
+            await this.sendWelcomeMessage(member);
+            
+            this.logger.log('✅ Welcome system test successful');
+            return true;
+            
+        } catch (error) {
+            this.logger.error('❌ Welcome system test failed:', error);
+            return false;
+        }
+    }
+}
+
+// Initialize the welcome system
+const welcomeSystem = new WelcomeSystem(client);
+
+// ===== CHANNEL MENTION HELPER FUNCTIONS =====
+function getChannelMention(guild, channelName) {
+    const channel = guild.channels.cache.find(ch => ch.name === channelName);
+    return channel ? `<#${channel.id}>` : `#${channelName}`;
+}
+
+function getClickableChannelMentions(guild) {
+    return {
+        bookshelfFeedback: getChannelMention(guild, 'bookshelf-feedback'),
+        bookshelfDiscussion: getChannelMention(guild, 'bookshelf-discussion'),
+        bookshelf: getChannelMention(guild, 'bookshelf')
+    };
+}
 
 // ===== UTILITY FUNCTIONS =====
 function getCurrentMonthKey() {
@@ -205,6 +458,10 @@ function isInAllowedFeedbackThread(channel) {
 
 function hasStaffPermissions(member) {
     return member?.permissions?.has(PermissionFlagsBits.ManageMessages);
+}
+
+function isServerOwner(userId, guild) {
+    return userId === guild.ownerId;
 }
 
 function hasUserLoggedFeedbackForMessage(messageId, userId) {
@@ -586,7 +843,7 @@ async function findUserLatestMessage(channel, userId) {
 const commands = [
     new SlashCommandBuilder()
         .setName('feedback')
-        .setDescription('Log your most recent feedback message in this thread'),
+        .setDescription('Log your most recent contribution in this thread'),
     
     new SlashCommandBuilder()
         .setName('feedback_status')
@@ -652,7 +909,20 @@ const commands = [
     new SlashCommandBuilder()
         .setName('pardon')
         .setDescription('Pardon a reader from monthly feedback requirement (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('Reader to pardon from this month\'s requirement').setRequired(true))
+        .addUserOption(option => option.setName('user').setDescription('Reader to pardon from this month\'s requirement').setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('manual_purge')
+        .setDescription('Manually trigger monthly purge of inactive readers (Server Owner only)'),
+
+    new SlashCommandBuilder()
+        .setName('test_welcome')
+        .setDescription('Test the welcome system (Staff only)')
+        .addUserOption(option => 
+            option.setName('user')
+                .setDescription('User to test welcome message for (defaults to yourself)')
+                .setRequired(false)
+        )
 ];
 
 async function registerCommands() {
@@ -672,6 +942,9 @@ client.once('ready', async () => {
     await loadData();
     await registerCommands();
     
+    // Initialize welcome system
+    welcomeSystem.init();
+    
     // Start monthly purge scheduler for all guilds
     client.guilds.cache.forEach(guild => {
         scheduleMonthlyPurge(guild);
@@ -679,17 +952,6 @@ client.once('ready', async () => {
     });
 });
 
-client.on('guildMemberAdd', async (member) => {
-    console.log(`New member joined: ${member.displayName} (${member.id})`);
-    
-    // Check if this user has existing data (rejoining) and reset it
-    if (userData[member.id] || monthlyFeedback[member.id]) {
-        console.log(`Detected returning user ${member.displayName}, resetting their data`);
-        await resetUserProgress(member.id, member.guild);
-    }
-});
-
-// ===== NEW EVENT HANDLERS FOR USER RESET =====
 client.on('guildMemberRemove', async (member) => {
     console.log(`Member left the server: ${member.displayName} (${member.id})`);
     await resetUserProgress(member.id, member.guild);
@@ -719,13 +981,14 @@ client.on('threadCreate', async (thread) => {
                 // Send DM to user explaining why
                 try {
                     const dmChannel = await member.createDM();
+                    const channels = getClickableChannelMentions(thread.guild);
                     const embed = new EmbedBuilder()
                         .setTitle('Bookshelf Thread Removed ☝️')
                         .setDescription(`Dear ${member.displayName}, your bookshelf thread has been removed as you lack the required roles.`)
                         .addFields(
                             { name: 'Requirements to Create Bookshelf Threads', value: `• **Shelf Owner role** (purchasable with 1 credit via \`/store\`)\n• **reader role** (assigned by staff based on feedback quality)\n• **Both roles required** to create threads`, inline: false },
                             { name: 'Your Current Status', value: `• Shelf Owner: ${hasShelfRole(member) ? '✅' : '❌'}\n• reader role: ${hasReaderRole(member) ? '✅' : '❌'}`, inline: false },
-                            { name: 'How to Gain Access', value: '1. Give feedback to fellow writers and log it with `/feedback`\n2. Purchase "Shelf Owner" role from `/store` for 1 credit\n3. Staff will review your feedback quality and assign reader role\n4. Once you have both roles, you can create <#bookshelf> threads', inline: false }
+                            { name: 'How to Gain Access', value: `1. Give feedback to fellow writers and log it with \`/feedback\`\n2. Purchase "Shelf Owner" role from \`/store\` for 1 credit\n3. Staff will review your feedback quality and assign reader role\n4. Once you have both roles, you can create ${channels.bookshelf} threads`, inline: false }
                         )
                         .setColor(0xFF9900);
                     
@@ -750,7 +1013,7 @@ client.on('messageCreate', async (message) => {
         
         if (!isThreadOwner) {
             await message.delete();
-            await sendBookshelfAccessDeniedDM(message.author, 'thread_owner');
+            await sendBookshelfAccessDeniedDM(message.author, 'thread_owner', null, message.member);
         }
         // If thread owner, allow the message but don't process credits
         return;
@@ -776,12 +1039,20 @@ client.on('interactionCreate', async (interaction) => {
 
 // ===== MESSAGE HANDLERS =====
 async function sendBookshelfAccessDeniedDM(author, reason, user = null, member = null) {
+    // Get guild reference from member
+    const guild = member?.guild;
+    const channels = guild ? getClickableChannelMentions(guild) : {
+        bookshelfFeedback: '#bookshelf-feedback',
+        bookshelfDiscussion: '#bookshelf-discussion',
+        bookshelf: '#bookshelf'
+    };
+    
     const embeds = {
         thread_owner: new EmbedBuilder()
             .setTitle('Thread Owner Only ☝️')
             .setDescription(`Dear ${author}, I regret to inform you that only the original author may add content to their literary threads. This sacred space is reserved for the creator's continued narrative.`)
             .addFields(
-                { name: 'How to Provide Feedback', value: '• Visit the **<#bookshelf-feedback>** or **<#bookshelf-discussion>** forums\n• Create a thread or comment with your thoughts\n• Use `/feedback` or `!feedback` to log your contribution', inline: false },
+                { name: 'How to Provide Feedback', value: `• Visit the ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n• Create a thread or comment with your thoughts\n• Use \`/feedback\` or \`!feedback\` to log your contribution`, inline: false },
                 { name: 'Why This Restriction?', value: 'Each bookshelf thread is the author\'s personal showcase space. Feedback and discussions happen in the dedicated feedback forums.', inline: false }
             )
             .setColor(0xFF9900),
@@ -837,7 +1108,8 @@ async function handleCommand(message) {
             store: () => handleStoreCommand(message),
             buy: () => handleBuyCommand(message, args),
             setup_bookshelf: () => handleSetupBookshelfCommand(message),
-            pardon: () => handlePardonCommand(message, args)
+            pardon: () => handlePardonCommand(message, args),
+            manual_purge: () => handleManualPurgeCommand(message)
         };
         
         const handler = commandHandlers[command];
@@ -866,7 +1138,9 @@ async function handleSlashCommand(interaction) {
         store: () => handleStoreSlashCommand(interaction),
         buy: () => handleBuySlashCommand(interaction),
         setup_bookshelf: () => handleSetupBookshelfSlashCommand(interaction),
-        pardon: () => handlePardonSlashCommand(interaction)
+        pardon: () => handlePardonSlashCommand(interaction),
+        manual_purge: () => handleManualPurgeSlashCommand(interaction),
+        test_welcome: () => handleTestWelcomeSlashCommand(interaction)
     };
     
     const handler = commandHandlers[interaction.commandName];
@@ -889,6 +1163,10 @@ async function handleFeedbackSlashCommand(interaction) {
 async function processFeedbackCommand(user, member, channel, isSlash, interaction = null) {
     console.log(`Processing feedback command for ${user.displayName} in ${channel.name}`);
     
+    // Get guild reference and clickable channel mentions
+    const guild = channel.guild;
+    const channels = getClickableChannelMentions(guild);
+    
     // Check if command is used in correct threads
     if (!isInAllowedFeedbackThread(channel)) {
         const embed = new EmbedBuilder()
@@ -896,7 +1174,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
             .setDescription('I regret to inform you that feedback credits may only be logged within the designated literary threads of our community, under works other than your own.')
             .addFields({
                 name: 'Permitted Threads',
-                value: '• **<#bookshelf-feedback>** forum - For recording feedback given to fellow writers\n• **<#bookshelf-discussion>** forum - For discussions about literary critiques',
+                value: `• ${channels.bookshelfFeedback} forum - For recording feedback given to fellow writers\n• ${channels.bookshelfDiscussion} forum - For discussions about literary critiques`,
                 inline: false
             })
             .setColor(0xFF9900);
@@ -1018,6 +1296,10 @@ async function handlePostChapterSlashCommand(interaction) {
 }
 
 async function processPostChapterCommand(user, member, channel, isSlash, interaction = null) {
+    // Get guild reference and clickable channel mentions
+    const guild = channel.guild;
+    const channels = getClickableChannelMentions(guild);
+    
     // Check if in bookshelf thread
     if (!channel.isThread() || !channel.parent || channel.parent.name !== 'bookshelf') {
         const embed = new EmbedBuilder()
@@ -1025,7 +1307,7 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
             .setDescription('I regret to inform you that the post chapter command may only be used within your own bookshelf thread, dear writer.')
             .addFields({
                 name: 'How to Use',
-                value: '• Go to your thread in the <#bookshelf> forum\n• Use `/post_chapter` to post a new chapter (costs 1 credit)\n• Only the thread owner may post chapters',
+                value: `• Go to your thread in the ${channels.bookshelf} forum\n• Use \`/post_chapter\` to post a new chapter (costs 1 credit)\n• Only the thread owner may post chapters`,
                 inline: false
             })
             .setColor(0xFF9900);
@@ -1112,6 +1394,173 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
     } else {
         await replyTemporaryMessage(message, { embeds: [embed] });
     }
+}
+
+// ===== MANUAL PURGE COMMANDS =====
+async function handleManualPurgeCommand(message) {
+    if (!isServerOwner(message.author.id, message.guild)) {
+        return replyTemporaryMessage(message, 'I regret to inform you that this sacred power is reserved exclusively for the server owner, my lord. Such grave authority cannot be delegated.');
+    }
+    
+    const result = await performManualPurge(message.guild);
+    const embed = createPurgeResultEmbed(result);
+    await replyTemporaryMessage(message, { embeds: [embed] });
+}
+
+async function handleManualPurgeSlashCommand(interaction) {
+    if (!isServerOwner(interaction.user.id, interaction.guild)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Server Owner Only')
+            .setDescription('I regret to inform you that this sacred power is reserved exclusively for the server owner, my lord. Such grave authority cannot be delegated.')
+            .setColor(0xFF6B6B);
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    const result = await performManualPurge(interaction.guild);
+    const embed = createPurgeResultEmbed(result);
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function performManualPurge(guild) {
+    console.log('Manual purge initiated by server owner...');
+    
+    const readerRole = guild.roles.cache.find(r => r.name === 'reader');
+    if (!readerRole) {
+        console.log('reader role not found for manual purge');
+        return { success: false, reason: 'no_reader_role' };
+    }
+    
+    let purgedCount = 0;
+    const purgedUsers = [];
+    const pardonedUsers = [];
+    const exemptUsers = [];
+    
+    // Get all members with reader role
+    const readersWithRole = guild.members.cache.filter(member => 
+        member.roles.cache.has(readerRole.id)
+    );
+    
+    for (const [userId, member] of readersWithRole) {
+        // Skip if user is pardoned this month
+        if (isUserPardoned(userId)) {
+            console.log(`Skipping ${member.displayName} - pardoned this month`);
+            pardonedUsers.push(member.displayName);
+            continue;
+        }
+        
+        const monthlyCount = getUserMonthlyFeedback(userId);
+        
+        // If user hasn't met monthly requirement, purge them
+        if (monthlyCount < MONTHLY_FEEDBACK_REQUIREMENT) {
+            try {
+                // Send DM notification before kicking
+                try {
+                    const dmChannel = await member.createDM();
+                    const embed = new EmbedBuilder()
+                        .setTitle('Monthly Requirement Not Met - Server Removal ☝️')
+                        .setDescription(`Dear ${member.displayName}, I regret to inform you that you are being removed from the server due to insufficient feedback contributions this month.`)
+                        .addFields(
+                            { name: 'Your Monthly Contributions', value: `${monthlyCount} feedback credits`, inline: true },
+                            { name: 'Required Amount', value: `${MONTHLY_FEEDBACK_REQUIREMENT} feedback credits`, inline: true },
+                            { name: 'What This Means', value: '• You are being kicked from the server\n• You may rejoin if invited again\n• Your progress will be reset upon rejoining', inline: false },
+                            { name: 'How to Avoid This in Future', value: '1. Provide thoughtful feedback to fellow writers\n2. Log your contributions with `/feedback`\n3. Meet the monthly requirement of 2 feedback credits', inline: false }
+                        )
+                        .setColor(0xFF6B6B);
+                    
+                    await dmChannel.send({ embeds: [embed] });
+                } catch (dmError) {
+                    console.log(`Could not send purge notification DM to ${member.displayName}`);
+                }
+                
+                // Kick the user from the server
+                await member.kick('Monthly feedback requirement not met - manual purge by server owner');
+                
+                purgedCount++;
+                purgedUsers.push(`${member.displayName} (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
+                console.log(`Kicked ${member.displayName} for insufficient monthly feedback (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
+                
+            } catch (error) {
+                console.error(`Failed to kick ${member.displayName}:`, error);
+            }
+        } else {
+            exemptUsers.push(`${member.displayName} (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT})`);
+        }
+    }
+    
+    // Log summary
+    console.log(`Manual purge completed: ${purgedCount} readers kicked from server`);
+    if (purgedUsers.length > 0) {
+        console.log(`Kicked users: ${purgedUsers.join(', ')}`);
+    }
+    
+    return { 
+        success: true, 
+        purgedCount, 
+        purgedUsers, 
+        pardonedUsers, 
+        exemptUsers,
+        totalReaders: readersWithRole.size
+    };
+}
+
+function createPurgeResultEmbed(result) {
+    if (!result.success) {
+        const errorMessages = {
+            no_reader_role: 'I regret to inform you that no reader role could be found in this server. The purge cannot proceed without this essential role.'
+        };
+        
+        return new EmbedBuilder()
+            .setTitle('Purge Failed ☝️')
+            .setDescription(errorMessages[result.reason] || 'An unexpected complication has arisen during the purge process.')
+            .setColor(0xFF6B6B);
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Manual Purge Completed ☝️')
+        .setDescription(`The monthly purge has been executed at your command, my lord. I have reviewed all readers and taken appropriate action based on their contributions.`)
+        .addFields(
+            { name: 'Total Readers Reviewed', value: `${result.totalReaders} members`, inline: true },
+            { name: 'Readers Removed', value: `${result.purgedCount} members`, inline: true },
+            { name: 'Pardoned This Month', value: `${result.pardonedUsers.length} members`, inline: true }
+        )
+        .setColor(result.purgedCount > 0 ? 0xFF6B6B : 0x00AA55);
+    
+    // Add details if there were purged users
+    if (result.purgedUsers.length > 0) {
+        const purgedList = result.purgedUsers.slice(0, 10).join('\n'); // Limit to 10 to avoid embed limits
+        const additionalCount = result.purgedUsers.length > 10 ? `\n...and ${result.purgedUsers.length - 10} more` : '';
+        
+        embed.addFields({
+            name: 'Removed Members (Credits This Month)',
+            value: purgedList + additionalCount,
+            inline: false
+        });
+    }
+    
+    // Add pardoned users if any
+    if (result.pardonedUsers.length > 0) {
+        const pardonedList = result.pardonedUsers.slice(0, 5).join('\n'); // Limit to 5
+        const additionalPardoned = result.pardonedUsers.length > 5 ? `\n...and ${result.pardonedUsers.length - 5} more` : '';
+        
+        embed.addFields({
+            name: 'Pardoned Members',
+            value: pardonedList + additionalPardoned,
+            inline: false
+        });
+    }
+    
+    // Add exempt users count
+    if (result.exemptUsers.length > 0) {
+        embed.addFields({
+            name: 'Members Meeting Requirements',
+            value: `${result.exemptUsers.length} readers have fulfilled their monthly obligations and remain in good standing.`,
+            inline: false
+        });
+    }
+    
+    embed.setFooter({ text: 'Manual purge executed by server owner • All affected users have been notified via DM' });
+    
+    return embed;
 }
 
 // ===== BALANCE COMMANDS =====
@@ -1231,23 +1680,25 @@ async function createHallOfFameEmbed(guild) {
 }
 
 async function handleStoreCommand(message) {
-    const embed = createStoreEmbed();
+    const embed = createStoreEmbed(message.guild);
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
 async function handleStoreSlashCommand(interaction) {
-    const embed = createStoreEmbed();
+    const embed = createStoreEmbed(interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-function createStoreEmbed() {
+function createStoreEmbed(guild) {
+    const channels = getClickableChannelMentions(guild);
+    
     return new EmbedBuilder()
         .setTitle('Type&Draft Literary Emporium ☝️')
         .setDescription('Welcome to our humble establishment, where dedication to the craft is rewarded with privileges. Examine our current offerings, crafted with the utmost care for our literary community.')
         .addFields(
-            { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in <#bookshelf>\n**Price:** ${STORE_ITEMS.shelf.price} feedback credits\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
+            { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} feedback credits\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
             { name: 'How to Earn Credits', value: `• **Provide feedback** to fellow writers in the designated forums\n• **Log contributions** with \`/feedback\` to earn 1 credit each\n• **Build your reputation** through meaningful engagement`, inline: false },
-            { name: 'Important Notice', value: 'To post chapters in <#bookshelf>, you need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned based on feedback quality). Each chapter posted costs 1 credit via `/post_chapter`.', inline: false }
+            { name: 'Important Notice', value: `To post chapters in ${channels.bookshelf}, you need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned based on feedback quality). Each chapter posted costs 1 credit via \`/post_chapter\`.`, inline: false }
         )
         .setColor(0x2F3136)
         .setFooter({ text: 'All purchases support our thriving literary community.' });
@@ -1260,14 +1711,14 @@ async function handleBuyCommand(message, args) {
     }
     
     const result = await processPurchase(message.author.id, itemKey, message.member, message.guild);
-    const embed = createPurchaseResultEmbed(message.author, itemKey, result);
+    const embed = createPurchaseResultEmbed(message.author, itemKey, result, message.guild);
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
 async function handleBuySlashCommand(interaction) {
     const itemKey = interaction.options.getString('item');
     const result = await processPurchase(interaction.user.id, itemKey, interaction.member, interaction.guild);
-    const embed = createPurchaseResultEmbed(interaction.user, itemKey, result);
+    const embed = createPurchaseResultEmbed(interaction.user, itemKey, result, interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
@@ -1335,8 +1786,9 @@ async function assignPurchaseRoles(member, guild, itemKey) {
     }
 }
 
-function createPurchaseResultEmbed(user, itemKey, result) {
+function createPurchaseResultEmbed(user, itemKey, result, guild) {
     const item = STORE_ITEMS[itemKey];
+    const channels = getClickableChannelMentions(guild);
     
     if (!result.success) {
         const errorEmbeds = {
@@ -1366,7 +1818,7 @@ function createPurchaseResultEmbed(user, itemKey, result) {
             { name: 'Item Purchased', value: `${item.emoji} ${item.name}`, inline: true },
             { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
             { name: 'Role Granted', value: `🎭 Shelf Owner`, inline: true },
-            { name: 'Important Notice', value: '⚠️ **reader role required separately from staff** to post chapters in <#bookshelf> forum. Staff will review your feedback quality and assign the reader role when appropriate.', inline: false },
+            { name: 'Important Notice', value: `⚠️ **reader role required separately from staff** to post chapters in ${channels.bookshelf} forum. Staff will review your feedback quality and assign the reader role when appropriate.`, inline: false },
             { name: 'Next Steps', value: '1. Continue giving quality feedback to fellow writers\n2. Staff will review and assign reader role when ready\n3. Once you have both roles, use `/post_chapter` to post chapters (1 credit each)', inline: false }
         )
         .setColor(0x00AA55);
@@ -1799,7 +2251,7 @@ function createAllCommandsEmbed() {
         .addFields(
             { 
                 name: '📝 Feedback System (Level 5 Required)', 
-                value: '`/feedback` or `!feedback` - Log your most recent feedback message\n`/feedback_status [user]` - Check monthly feedback status', 
+                value: '`/feedback` or `!feedback` - Log your most recent contribution\n`/feedback_status [user]` - Check monthly feedback status', 
                 inline: false 
             },
             { 
@@ -1819,7 +2271,7 @@ function createAllCommandsEmbed() {
             },
             { 
                 name: '👑 Staff: Server Administration', 
-                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Configure bookshelf forum permissions\n`/pardon` - Pardon a reader from monthly feedback requirement', 
+                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Configure bookshelf forum permissions\n`/pardon` - Pardon a reader from monthly feedback requirement\n`/manual_purge` - Manually trigger monthly purge (Server Owner only)\n`/test_welcome` - Test the welcome system', 
                 inline: false 
             }
         )
@@ -1828,23 +2280,25 @@ function createAllCommandsEmbed() {
 }
 
 async function handleHelpCommand(message) {
-    const embed = createHelpEmbed();
+    const embed = createHelpEmbed(message.guild);
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
 async function handleHelpSlashCommand(interaction) {
-    const embed = createHelpEmbed();
+    const embed = createHelpEmbed(interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-function createHelpEmbed() {
+function createHelpEmbed(guild) {
+    const channels = getClickableChannelMentions(guild);
+    
     return new EmbedBuilder()
         .setTitle('Essential Commands at Your Service ☝️')
         .setDescription('Welcome to our distinguished literary community! Behold the fundamental commands for the feedback and credit system:')
         .addFields(
             { 
                 name: '📝 Earning Feedback Credits (Level 5 Required)', 
-                value: '**Step 1:** Visit <#bookshelf-feedback> or <#bookshelf-discussion> forums\n**Step 2:** Find another writer\'s thread and provide thoughtful feedback\n**Step 3:** Use `/feedback` to log your most recent feedback message\n**Step 4:** Earn 1 credit per logged feedback contribution!', 
+                value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful feedback\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback contribution!`, 
                 inline: false 
             },
             { 
@@ -1854,7 +2308,7 @@ function createHelpEmbed() {
             },
             { 
                 name: '📚 Bookshelf Access', 
-                value: '`/store` - View purchasable items\n`/buy shelf` - Purchase Shelf Owner role (1 credit)\n**Important:** You need **both** Shelf Owner role (purchasable) **and** reader role (staff-assigned) to post in <#bookshelf>', 
+                value: `\`/store\` - View purchasable items\n\`/buy shelf\` - Purchase Shelf Owner role (1 credit)\n**Important:** You need **both** Shelf Owner role (purchasable) **and** reader role (staff-assigned) to post in ${channels.bookshelf}`, 
                 inline: false 
             },
             { 
@@ -1870,6 +2324,45 @@ function createHelpEmbed() {
         )
         .setColor(0x5865F2)
         .setFooter({ text: 'Your humble servant in all matters literary and administrative' });
+}
+
+// Add the test welcome command handler
+async function handleTestWelcomeSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Insufficient Authority')
+            .setDescription('Testing functions are reserved for staff members.')
+            .setColor(0xFF6B6B);
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    const targetUser = interaction.options.getUser('user') || interaction.user;
+    
+    await interaction.deferReply({ ephemeral: true });
+    
+    try {
+        const success = await welcomeSystem.testWelcome(interaction.guild, targetUser.id);
+        
+        const embed = new EmbedBuilder()
+            .setTitle('Welcome System Test')
+            .setDescription(`Test completed for ${targetUser.displayName}`)
+            .addFields({
+                name: 'Result',
+                value: success ? '✅ Success' : '❌ Failed',
+                inline: false
+            })
+            .setColor(success ? 0x00AA55 : 0xFF6B6B);
+        
+        await interaction.editReply({ embeds: [embed] });
+        
+    } catch (error) {
+        const embed = new EmbedBuilder()
+            .setTitle('Test Error')
+            .setDescription(`Test failed: ${error.message}`)
+            .setColor(0xFF6B6B);
+        
+        await interaction.editReply({ embeds: [embed] });
+    }
 }
 
 // ===== ERROR HANDLERS =====
