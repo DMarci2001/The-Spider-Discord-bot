@@ -945,7 +945,7 @@ client.on('messageCreate', async (message) => {
         if (message.channel.ownerId !== message.author.id) {
             await message.delete();
             await sendTemporaryChannelMessage(message.channel, 
-                `❌ **${message.author.displayName}**, only the thread creator can post here!`
+                `I am terribly sorry, **${message.author.displayName}**, but only the thread creator can post here!`
             );
             return;
         }
@@ -1422,10 +1422,7 @@ function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
         return new EmbedBuilder()
             .setTitle('Lease Purchase Completed ☝️')
             .addFields(
-                { name: 'Item Purchased', value: `${item.emoji} ${quantity} Chapter Lease${quantity === 1 ? '' : 's'}`, inline: true },
-                { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
-                { name: 'Ready to Write', value: `You can now post ${quantity} message${quantity === 1 ? '' : 's'} in your bookshelf thread!`, inline: false },
-                { name: 'Special Content Notice', value: `Need to post maps, artwork, or other non-chapter content? Create a staff ticket to request free leases for special content that enriches your story.`, inline: false }
+                { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true }
             )
             .setColor(0x00AA55);
     }
