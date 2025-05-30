@@ -6,7 +6,7 @@ const fs = require('fs').promises;
 // Change this value to adjust how long bot messages stay before deletion
 // Current: 5 minutes (300000 milliseconds)
 // Examples: 60000 = 1 minute, 180000 = 3 minutes, 600000 = 10 minutes
-const MESSAGE_DELETE_TIMEOUT = 5000; // 5 minutes
+const MESSAGE_DELETE_TIMEOUT = 300000; // 5 minutes
 
 // ===== BOT SETUP =====
 const client = new Client({
@@ -2093,7 +2093,7 @@ async function createPurgeListEmbed(guild) {
     
     const embed = new EmbedBuilder()
         .setTitle('Monthly Purge List ☝️')
-        .setDescription('Do not be alarmed, my liege. This list merely reflects the current status quo, but it is subject to change depending on the actions of our noble writers.')
+        .setDescription('Do not be alarmed, my liege. This list merely reflects the current status quo, but it is subject to change, depending on the actions of our noble writers.')
         .addFields(
             { name: `🔥 Would Be Purged (${purgeCount})`, value: purgeList, inline: false },
             { name: `🛡️ Pardoned from Purge (${pardonedCount})`, value: pardonedList, inline: false },
@@ -2167,7 +2167,7 @@ function createHelpEmbed(guild) {
             },
             { 
                 name: '✍️ Chapter Posting', 
-                value: 'After gaining bookshelf access:\n1. Purchase chapter leases with `/buy lease` (1 credit each)\n2. Create your thread in the bookshelf forum\n3. Each message you post will automatically consume one lease\n4. Contact staff via ticket for free leases when posting maps, artwork, or special content', 
+                value: 'After gaining bookshelf access:\n1. Purchase chapter leases with `/buy lease` (1 credit each)\n2. Create your thread in the bookshelf forum\n3. Each chapter/short story you post will automatically consume one lease\n4. Contact staff via ticket for free leases when posting maps, artwork, or special content', 
                 inline: false 
             },
             { 
