@@ -25,7 +25,16 @@ const STORE_ITEMS = {
         description: "Grants you the Shelf Owner role (reader role required separately from staff)",
         price: 1,
         role: "Shelf Owner",
-        emoji: "📚"
+        emoji: "📚",
+        allowQuantity: false
+    },
+    lease: {
+        name: "Chapter Lease",
+        description: "Allows you to post one message in your bookshelf thread",
+        price: 1,
+        role: null,
+        emoji: "📝",
+        allowQuantity: true
     }
 };
 
@@ -90,13 +99,14 @@ async function sendActivityNotification(guild, type, data) {
                 )
                 .setColor(0x5865F2)
                 .setTimestamp();
-        } else if (type === 'post_chapter_command') {
+        } else if (type === 'lease_consumed') {
             embed = new EmbedBuilder()
-                .setTitle('📚 Chapter Posted')
+                .setTitle('📝 Chapter Lease Consumed')
                 .addFields(
                     { name: 'Thread', value: `[${data.thread.name}](${data.messageUrl})`, inline: false },
                     { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
                     { name: 'Author', value: `<@${data.userId}>`, inline: true },
+                    { name: 'Leases Remaining', value: `${data.leasesRemaining}`, inline: true },
                     { name: 'Posted At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
                 )
                 .setColor(0xFF9900)
@@ -121,6 +131,7 @@ function isMonitoredForumDirect(channel) {
     if (!channel) return false;
     return MONITORED_FORUMS.includes(channel.name);
 }
+
 // ===== WELCOME SYSTEM CLASS =====
 class WelcomeSystem {
     constructor(client) {
@@ -368,7 +379,8 @@ function getUserData(userId) {
             totalFeedbackAllTime: 0,
             currentCredits: 0,
             purchases: [],
-            bookshelfPosts: 0
+            bookshelfPosts: 0,
+            chapterLeases: 0
         };
     }
     
@@ -377,10 +389,12 @@ function getUserData(userId) {
     if (typeof user.totalFeedbackAllTime !== 'number') user.totalFeedbackAllTime = 0;
     if (typeof user.currentCredits !== 'number') user.currentCredits = 0;
     if (typeof user.bookshelfPosts !== 'number') user.bookshelfPosts = 0;
+    if (typeof user.chapterLeases !== 'number') user.chapterLeases = 0;
     
     user.totalFeedbackAllTime = Math.max(0, user.totalFeedbackAllTime);
     user.currentCredits = Math.max(0, user.currentCredits);
     user.bookshelfPosts = Math.max(0, user.bookshelfPosts);
+    user.chapterLeases = Math.max(0, user.chapterLeases);
     
     return user;
 }
@@ -394,6 +408,16 @@ function canCreateBookshelfThread(member) {
     return hasShelfRole(member) && hasReaderRole(member);
 }
 
+function canPostInBookshelf(userId, member) {
+    const user = getUserData(userId);
+    const hasEnoughFeedback = user.totalFeedbackAllTime >= MINIMUM_FEEDBACK_FOR_SHELF;
+    const hasShelfPurchase = user.purchases.includes('shelf');
+    const hasRequiredRoles = member ? (hasShelfRole(member) && hasReaderRole(member)) : false;
+    const hasLeases = user.chapterLeases > 0;
+    
+    return hasEnoughFeedback && hasShelfPurchase && hasRequiredRoles && hasLeases;
+}
+
 function spendCredits(userId, amount) {
     const user = getUserData(userId);
     const validAmount = Math.max(0, Math.floor(amount));
@@ -404,6 +428,24 @@ function spendCredits(userId, amount) {
     }
     console.log(`Insufficient credits for ${userId}: has ${user.currentCredits}, needs ${validAmount}`);
     return false;
+}
+
+function consumeLease(userId) {
+    const user = getUserData(userId);
+    if (user.chapterLeases > 0) {
+        user.chapterLeases -= 1;
+        user.bookshelfPosts += 1;
+        console.log(`User ${userId} consumed 1 lease. Remaining: ${user.chapterLeases}`);
+        return true;
+    }
+    console.log(`No leases available for ${userId}`);
+    return false;
+}
+
+function addLeases(userId, amount) {
+    const user = getUserData(userId);
+    user.chapterLeases += amount;
+    console.log(`Added ${amount} leases to user ${userId}. Total: ${user.chapterLeases}`);
 }
 
 function getBookshelfAccessStatus(userId, member = null) {
@@ -422,34 +464,25 @@ function getBookshelfAccessStatus(userId, member = null) {
     }
 }
 
-function canPostInBookshelf(userId, member) {
-    const user = getUserData(userId);
-    const hasEnoughFeedback = user.totalFeedbackAllTime >= MINIMUM_FEEDBACK_FOR_SHELF;
-    const hasShelfPurchase = user.purchases.includes('shelf');
-    const hasRequiredRoles = member ? (hasShelfRole(member) && hasReaderRole(member)) : false;
-    
-    return hasEnoughFeedback && hasShelfPurchase && hasRequiredRoles;
-}
-
-function getPostCreditStatus(userId, member) {
+function getLeaseStatus(userId, member) {
     const user = getUserData(userId);
     
     if (user.totalFeedbackAllTime < 1) {
-        return `📝 Need bookshelf to qualify for purchase`;
+        return `📝 Need bookshelf access to purchase leases`;
     }
     
     if (!user.purchases.includes('shelf')) {
-        return '💰 Qualified for purchase';
+        return '💰 Purchase shelf access first';
     }
     
     if (!member || !hasReaderRole(member)) {
         return '🔓 Awaiting reader role from staff';
     }
     
-    if (user.currentCredits >= 1) {
-        return `✅ ${user.currentCredits} credit${user.currentCredits === 1 ? '' : 's'} available for chapters`;
+    if (user.chapterLeases > 0) {
+        return `✅ ${user.chapterLeases} lease${user.chapterLeases === 1 ? '' : 's'} available`;
     } else {
-        return `📝 Need more feedback to post chapters`;
+        return `📝 No leases available - purchase with /buy lease`;
     }
 }
 
@@ -510,8 +543,6 @@ function pardonUser(userId) {
     }
 }
 
-// ===== MONTHLY PURGE SYSTEM =====
-
 // ===== USER RESET FUNCTION =====
 async function resetUserProgress(userId, guild) {
     console.log(`Resetting all progress for user ${userId}`);
@@ -541,7 +572,6 @@ async function resetUserProgress(userId, guild) {
 }
 
 // ===== TEMPORARY MESSAGE FUNCTIONS =====
-
 async function replyTemporary(interaction, messageOptions, delay = MESSAGE_DELETE_TIMEOUT) {
     try {
         const message = await interaction.reply(messageOptions);
@@ -584,7 +614,7 @@ async function replyTemporaryMessage(message, messageOptions, delay = MESSAGE_DE
 async function saveData() {
     try {
         const data = { monthlyFeedback, userData, loggedFeedbackMessages, pardonedUsers };
-        await fs.writeFile('bot_data.json', JSON.stringify(data, null, 2));
+        await fs.writeFile('testbot_data.json', JSON.stringify(data, null, 2));
         console.log('Data saved successfully');
     } catch (error) {
         console.error('Error saving data:', error);
@@ -593,7 +623,7 @@ async function saveData() {
 
 async function loadData() {
     try {
-        const data = await fs.readFile('bot_data.json', 'utf8');
+        const data = await fs.readFile('testbot_data.json', 'utf8');
         const parsed = JSON.parse(data);
         monthlyFeedback = parsed.monthlyFeedback || {};
         userData = parsed.userData || {};
@@ -715,11 +745,11 @@ const commands = [
         .setName('buy')
         .setDescription('Purchase an item from the store')
         .addStringOption(option => option.setName('item').setDescription('Item to purchase').setRequired(true)
-            .addChoices({ name: 'Bookshelf Access (1 credit)', value: 'shelf' })),
-    
-    new SlashCommandBuilder()
-        .setName('post_chapter')
-        .setDescription('Post a new chapter in your bookshelf thread (costs 1 credit)'),
+            .addChoices(
+                { name: 'Bookshelf Access (1 credit)', value: 'shelf' },
+                { name: 'Chapter Lease (1 credit)', value: 'lease' }
+            ))
+        .addIntegerOption(option => option.setName('quantity').setDescription('Quantity to purchase (only for leases)').setRequired(false).setMinValue(1).setMaxValue(50)),
     
     new SlashCommandBuilder()
         .setName('hall_of_fame')
@@ -763,6 +793,12 @@ const commands = [
         .addIntegerOption(option => option.setName('amount').setDescription('Number of credits to remove (default: 1)').setRequired(false)),
     
     new SlashCommandBuilder()
+        .setName('lease_add')
+        .setDescription('Add chapter leases to a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to add leases to').setRequired(true))
+        .addIntegerOption(option => option.setName('amount').setDescription('Number of leases to add (default: 1)').setRequired(false)),
+    
+    new SlashCommandBuilder()
         .setName('stats')
         .setDescription('View detailed server statistics (Staff only)'),
     
@@ -783,7 +819,7 @@ const commands = [
 
 async function registerCommands() {
     try {
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT2_TOKEN);
         console.log('Started refreshing application (/) commands.');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('Successfully reloaded application (/) commands.');
@@ -809,8 +845,6 @@ client.once('ready', async () => {
         } catch (error) {
             console.error(`Failed to fetch members for ${guild.name}:`, error);
         }
-        
-        // Start monthly purge scheduler
     }
 });
 
@@ -824,7 +858,6 @@ client.on('guildBanAdd', async (ban) => {
     await resetUserProgress(ban.user.id, ban.guild);
 });
 
-// ===== THREAD CREATION HANDLER =====
 // ===== THREAD CREATION HANDLER =====
 client.on('threadCreate', async (thread) => {
     // Send activity notification for monitored forums
@@ -850,9 +883,9 @@ client.on('threadCreate', async (thread) => {
                     const embed = new EmbedBuilder()
                         .setTitle('Bookshelf Thread Removed ☝️')
                         .addFields(
-                            { name: 'Requirements to Create Bookshelf Threads', value: `• **Shelf Owner** role (purchasable with 1 credit via \`/buy\`)\n• **reader** role (assigned by staff based on feedback quality)`, inline: false },
+                            { name: 'Requirements to Create Bookshelf Threads', value: `• **Shelf Owner** role (purchasable with 1 credit via \`/buy shelf\`)\n• **reader** role (assigned by staff based on feedback quality)`, inline: false },
                             { name: 'Your Current Status', value: `• Shelf Owner: ${hasShelfRole(member) ? '✅' : '❌'}\n• reader: ${hasReaderRole(member) ? '✅' : '❌'}`, inline: false },
-                            { name: 'How to Gain Access', value: `1. Give feedback to fellow writers and log it with \`/feedback\`\n2. Purchase a shelf from the store for 1 credit\n3. Staff will review your feedback quality and assign you the reader role if your feedback is sufficient\n4. Once you have both roles, you can create ${channels.bookshelf} threads`, inline: false }
+                            { name: 'How to Gain Access', value: `1. Give feedback to fellow writers and log it with \`/feedback\`\n2. Purchase shelf access with \`/buy shelf\`\n3. Staff will review your feedback quality and assign you the reader role if your feedback is sufficient\n4. Once you have both roles, you can create ${channels.bookshelf} threads`, inline: false }
                         )
                         .setColor(0xFF9900);
                     
@@ -870,18 +903,49 @@ client.on('threadCreate', async (thread) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // Remove the activity monitoring for regular messages - we only want commands and threads now
-
-    if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
-        const isThreadOwner = message.channel.ownerId === message.author.id;
+    // BOOKSHELF LEASE ENFORCEMENT - SIMPLIFIED AND DIRECT
+    if (message.channel.isThread() && 
+        message.channel.parent && 
+        message.channel.parent.name === 'bookshelf' &&
+        message.channel.ownerId === message.author.id) {
         
-        if (!isThreadOwner) {
-            await message.delete();
-            await sendBookshelfAccessDeniedDM(message.author, 'thread_owner', null, message.member);
+        const userRecord = getUserData(message.author.id);
+        
+        // IMMEDIATE LEASE CHECK - NO OTHER LOGIC
+        if (userRecord.chapterLeases <= 0) {
+            message.delete().catch(console.error);
+            message.channel.send(`📝 **${message.author.displayName}**, you have **0 chapter leases** remaining! Purchase more with \`/buy lease\` to continue posting.`)
+                .then(msg => setTimeout(() => msg.delete().catch(console.error), 15000))
+                .catch(console.error);
+            return;
         }
+        
+        // If they have leases, consume one
+        userRecord.chapterLeases -= 1;
+        saveData();
+        
+        // Show confirmation
+        message.channel.send(`📝 Chapter posted! **${userRecord.chapterLeases}** leases remaining.`)
+            .then(msg => setTimeout(() => msg.delete().catch(console.error), 8000))
+            .catch(console.error);
+        
         return;
     }
 
+    // Non-thread-owner posting in bookshelf threads
+    if (message.channel.isThread() && 
+        message.channel.parent && 
+        message.channel.parent.name === 'bookshelf' &&
+        message.channel.ownerId !== message.author.id) {
+        
+        message.delete().catch(console.error);
+        message.channel.send(`❌ **${message.author.displayName}**, only the thread creator can post here!`)
+            .then(msg => setTimeout(() => msg.delete().catch(console.error), 10000))
+            .catch(console.error);
+        return;
+    }
+
+    // Handle legacy commands
     if (message.content.startsWith('!')) {
         await handleCommand(message);
         return;
@@ -899,50 +963,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// ===== MESSAGE HANDLERS =====
-async function sendBookshelfAccessDeniedDM(author, reason, user = null, member = null) {
-    const guild = member?.guild;
-    const channels = guild ? getClickableChannelMentions(guild) : {
-        bookshelfFeedback: '#bookshelf-feedback',
-        bookshelfDiscussion: '#bookshelf-discussion',
-        bookshelf: '#bookshelf'
-    };
-    
-    const embeds = {
-        thread_owner: new EmbedBuilder()
-            .setTitle('Thread Owner Only ☝️')
-            .setDescription(`Dear ${author}, I regret to inform you that only the original author may add content to their literary threads. This sacred space is reserved for the creator's continued narrative.`)
-            .addFields(
-                { name: 'How to Provide Feedback', value: `• Visit the ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n• Share your thoughts\n• Use \`/feedback\` or \`!feedback\` to log your contribution`, inline: false }
-            )
-            .setColor(0xFF9900),
-        
-        no_access: new EmbedBuilder()
-            .setTitle('Bookshelf Access Required ☝️')
-            .addFields(
-                { name: 'Requirements to Post', value: `• **Shelf Owner role** (purchasable with 1 credit)\n• **reader role** (assigned by staff based on feedback quality)\n• **Both roles required** to create or post in threads`, inline: false },
-                { name: 'Your Current Status', value: `• Credits Available: ${user?.currentCredits || 0}\n• Shelf Owner: ${member && hasShelfRole(member) ? '✅' : '❌'}\n• reader role: ${member && hasReaderRole(member) ? '✅' : '❌'}`, inline: false },
-                { name: 'How to Gain Access', value: '1. Give feedback to fellow writers and log it with `/feedback`\n2. Purchase "Shelf Owner" role from `/store` for 1 credit\n3. Staff will review your feedback quality and assign reader role\n4. Use `/post_chapter` to post chapters (costs 1 credit each)', inline: false }
-            )
-            .setColor(0xFF9900),
-        
-        no_credits: new EmbedBuilder()
-            .setTitle('Insufficient Credits ☝️')
-            .addFields(
-                { name: 'Your Status', value: `• **Current credits:** ${user?.currentCredits || 0}\n• **Credits needed:** 1`, inline: false },
-                { name: 'How to Earn Credits', value: `Give feedback to fellow writers in the forums and log it with \`/feedback\` to earn more credits`, inline: false }
-            )
-            .setColor(0xFF9900)
-    };
-    
-    try {
-        const dmChannel = await author.createDM();
-        await dmChannel.send({ embeds: [embeds[reason]] });
-    } catch (error) {
-        console.log('Could not send DM to user:', error.message);
-    }
-}
-
 // ===== COMMAND HANDLERS =====
 async function handleCommand(message) {
     const args = message.content.slice(1).trim().split(/ +/);
@@ -959,10 +979,10 @@ async function handleCommand(message) {
             feedback_reset: () => handleFeedbackResetCommand(message),
             credit_add: () => handleCreditAddCommand(message, args),
             credit_remove: () => handleCreditRemoveCommand(message, args),
+            lease_add: () => handleLeaseAddCommand(message, args),
             help: () => handleHelpCommand(message),
             commands: () => handleCommandsCommand(message),
             hall_of_fame: () => handleHallOfFameCommand(message),
-            post_chapter: () => handlePostChapterCommand(message),
             stats: () => handleStatsCommand(message),
             balance: () => handleBalanceCommand(message),
             store: () => handleStoreCommand(message),
@@ -991,10 +1011,10 @@ async function handleSlashCommand(interaction) {
         feedback_reset: () => handleFeedbackResetSlashCommand(interaction),
         credit_add: () => handleCreditAddSlashCommand(interaction),
         credit_remove: () => handleCreditRemoveSlashCommand(interaction),
+        lease_add: () => handleLeaseAddSlashCommand(interaction),
         help: () => handleHelpSlashCommand(interaction),
         commands: () => handleCommandsSlashCommand(interaction),
         hall_of_fame: () => handleHallOfFameSlashCommand(interaction),
-        post_chapter: () => handlePostChapterSlashCommand(interaction),
         stats: () => handleStatsSlashCommand(interaction),
         balance: () => handleBalanceSlashCommand(interaction),
         store: () => handleStoreSlashCommand(interaction),
@@ -1008,69 +1028,6 @@ async function handleSlashCommand(interaction) {
     if (handler) {
         await handler();
     }
-}
-
-// ===== PURGE LIST COMMANDS =====
-async function handlePurgeListCommand(message) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my liege.');
-    }
-    
-    const embed = await createPurgeListEmbed(message.guild);
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handlePurgeListSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const embed = await createPurgeListEmbed(interaction.guild);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function createPurgeListEmbed(guild) {
-    // Get all members
-    const allMembers = await guild.members.fetch();
-    
-    let purgeList = '';
-    let safeList = '';
-    let purgeCount = 0;
-    let safeCount = 0;
-    
-    // Process each Level 5 member
-    allMembers.forEach((member, userId) => {
-        const monthlyCount = getUserMonthlyFeedback(userId);
-        const isPardoned = isUserPardoned(userId);
-        const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
-        
-        if (!meetingRequirement && !isPardoned) {
-            // Would be purged
-            purgeCount++;
-            purgeList += `❌ **${member.displayName}**\n`;
-        }
-    });
-    
-    // Truncate lists if too long
-    if (purgeList.length > 1000) {
-        purgeList = purgeList.substring(0, 950) + '...\n*(List truncated)*';
-    }
-    if (safeList.length > 1000) {
-        safeList = safeList.substring(0, 950) + '...\n*(List truncated)*';
-    }
-    
-    if (!purgeList) purgeList = '• No members would be purged this month';
-    if (!safeList) safeList = '• No members are safe this month';
-    
-    const purgePercentage = allMembers.size > 0 ? Math.round((purgeCount / allMembers.size) * 100) : 0;
-    
-    return new EmbedBuilder()
-        .setTitle('Monthly Purge List ☝️')
-        .addFields(
-            { name: `🔥 Would Be Purged (${purgeCount})`, value: purgeList, inline: false },
-            { name: 'Requirements', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: false }
-        )
-        .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
 }
 
 // ===== FEEDBACK COMMANDS =====
@@ -1129,7 +1086,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         if (isSlash) {
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
         } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
+            return await replyTemporaryMessage(message, { embeds: [embed] });
         }
     }
     
@@ -1141,7 +1098,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         if (isSlash) {
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
         } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
+            return await replyTemporaryMessage(message, { embeds: [embed] });
         }
     }
     
@@ -1156,7 +1113,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         if (isSlash) {
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
         } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
+            return await replyTemporaryMessage(message, { embeds: [embed] });
         }
     }
     
@@ -1169,7 +1126,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         if (isSlash) {
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
         } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
+            return await replyTemporaryMessage(message, { embeds: [embed] });
         }
     }
     
@@ -1203,166 +1160,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     }
 }
 
-// ===== POST CHAPTER COMMANDS =====
-async function handlePostChapterCommand(message) {
-    console.log(`Processing !post_chapter command for ${message.author.displayName}`);
-    return await processPostChapterCommand(message.author, message.member, message.channel, false);
-}
-
-async function handlePostChapterSlashCommand(interaction) {
-    console.log(`Processing /post_chapter command for ${interaction.user.displayName}`);
-    return await processPostChapterCommand(interaction.user, interaction.member, interaction.channel, true, interaction);
-}
-
-async function processPostChapterCommand(user, member, channel, isSlash, interaction = null) {
-    const guild = channel.guild;
-    const channels = getClickableChannelMentions(guild);
-    
-    if (!channel.isThread() || !channel.parent || channel.parent.name !== 'bookshelf') {
-        const embed = new EmbedBuilder()
-            .setTitle('Wrong Thread ☝️')
-            .setDescription('Alas, the post chapter command may only be used within your own bookshelf thread, dear writer.')
-            .setColor(0xFF9900);
-        
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage(message, { embeds: [embed] });
-        }
-    }
-    
-    if (channel.ownerId !== user.id) {
-        const embed = new EmbedBuilder()
-            .setTitle('Thread Owner Only ☝️')
-            .setDescription('I regret to inform you that only the thread owner may post chapters in their bookshelf thread, dear writer.')
-            .setColor(0xFF9900);
-        
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage(message, { embeds: [embed] });
-        }
-    }
-    
-    const userId = user.id;
-    const userRecord = getUserData(userId);
-    
-    // Check each requirement individually for better error messages
-    const hasEnoughFeedback = userRecord.totalFeedbackAllTime >= MINIMUM_FEEDBACK_FOR_SHELF;
-    const hasShelfPurchase = userRecord.purchases.includes('shelf');
-    const hasShelfOwnerRole = hasShelfRole(member);
-    const hasReaderRoleCheck = hasReaderRole(member);
-    
-    // Check feedback requirement first
-    if (!hasEnoughFeedback) {
-        const embed = new EmbedBuilder()
-            .setTitle('Insufficient Total Feedback ☝️')
-            .addFields({
-                name: 'Your Status',
-                value: `• **Total feedback earned:** ${userRecord.totalFeedbackAllTime}\n• **Required:** ${MINIMUM_FEEDBACK_FOR_SHELF}`,
-                inline: false
-            })
-            .setColor(0xFF9900);
-        
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage(message, { embeds: [embed] });
-        }
-    }
-    
-    // Check if shelf access was purchased
-    if (!hasShelfPurchase) {
-        const embed = new EmbedBuilder()
-            .setTitle('Shelf Access Not Purchased ☝️')
-            .addFields({
-                name: 'How to Purchase',
-                value: `Use \`/store\` to see the items for sale, and \`/buy shelf\` to purchase shelf access for 1 credit.`,
-                inline: false
-            })
-            .setColor(0xFF9900);
-        
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage(message, { embeds: [embed] });
-        }
-    }
-    
-    // Check roles last (this was the original bug - roles check came first)
-    if (!hasShelfOwnerRole || !hasReaderRoleCheck) {
-        const embed = new EmbedBuilder()
-            .setTitle('Required Roles Missing ☝️')
-            .addFields({
-                name: 'Your Current Status',
-                value: `• Shelf Owner: ${hasShelfOwnerRole ? '✅' : '❌'}\n• reader role: ${hasReaderRoleCheck ? '✅' : '❌'}`,
-                inline: false
-            },
-            {
-                name: 'Next Steps',
-                value: hasShelfOwnerRole ? 'Contact staff to request the reader role based on your feedback quality.' : 'Purchase a shelf from the store, and contact staff for reader role.',
-                inline: false
-            })
-            .setColor(0xFF9900);
-        
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage(message, { embeds: [embed] });
-        }
-    }
-    
-    // Check credits last
-    if (userRecord.currentCredits < 1) {
-        const embed = new EmbedBuilder()
-            .setTitle('Insufficient Credits ☝️')
-            .addFields({
-                name: 'How to Earn Credits',
-                value: 'Give feedback to fellow writers in the feedback forums and log it with `/feedback` to earn more credits.',
-                inline: false
-            })
-            .setColor(0xFF9900);
-        
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage(message, { embeds: [embed] });
-        }
-    }
-    
-    // All requirements met - process the chapter posting
-    spendCredits(userId, 1);
-    userRecord.bookshelfPosts += 1;
-    await saveData();
-    
-    // Send activity notification for bookshelf posts
-    if (channel.parent && channel.parent.name === 'bookshelf') {
-        const messageUrl = `https://discord.com/channels/${channel.guild.id}/${channel.id}`;
-        
-        await sendActivityNotification(channel.guild, 'post_chapter_command', {
-            thread: channel,
-            userId: user.id,
-            messageUrl: messageUrl
-        });
-    }
-    
-    const embed = new EmbedBuilder()
-        .setTitle('Chapter Posted Successfully ☝️')
-        .setDescription(`Dearest ${user}, your dedication to sharing your work with our community is most commendable.`)
-        .addFields(
-            { name: 'Credits Spent', value: `📝 1 credit`, inline: true },
-            { name: 'Credits Remaining', value: `💰 ${userRecord.currentCredits}`, inline: true },
-            { name: 'Total Chapters Posted', value: `📚 ${userRecord.bookshelfPosts}`, inline: true }
-        )
-        .setColor(0x00AA55);
-    
-    if (isSlash) {
-        await replyTemporary(interaction, { embeds: [embed] });
-    } else {
-        await replyTemporaryMessage(message, { embeds: [embed] });
-    }
-}
-
 // ===== BALANCE COMMANDS =====
 async function handleBalanceCommand(message) {
     const user = message.mentions.users.first() || message.author;
@@ -1382,7 +1179,7 @@ function createBalanceEmbed(user, member) {
     const userId = user.id;
     const userRecord = getUserData(userId);
     const monthlyCount = getUserMonthlyFeedback(userId);
-    const monthlyQuotaStatus = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 'Graciously fulfilled' : 'Unfulfilled';
+    const monthlyQuotaStatus = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅ Graciously fulfilled' : '❌ Unfulfilled';
     
     return new EmbedBuilder()
         .setTitle(`${user.displayName}'s Balance ☝️`)
@@ -1390,6 +1187,7 @@ function createBalanceEmbed(user, member) {
             { name: 'Total Credits', value: `📝 ${userRecord.totalFeedbackAllTime}`, inline: true },
             { name: 'Monthly Credits', value: `📅 ${monthlyCount}`, inline: true },
             { name: 'Current Credit Balance', value: `💰 ${userRecord.currentCredits}`, inline: true },
+            { name: 'Chapter Leases', value: `📄 ${userRecord.chapterLeases}`, inline: true },
             { name: 'Monthly Quota', value: `${monthlyQuotaStatus}`, inline: true },
             { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId, member), inline: true },
             { name: 'Purchases Made', value: userRecord.purchases.length > 0 ? userRecord.purchases.map(item => `• ${STORE_ITEMS[item]?.name || item}`).join('\n') : 'None yet', inline: false }
@@ -1419,7 +1217,7 @@ function createFeedbackStatusEmbed(user, requester) {
         .setTitle(`Literary Standing - ${user.displayName}`)
         .addFields(
             { name: 'This Month', value: `${monthlyCount} credit${monthlyCount !== 1 ? 's' : ''}`, inline: true },
-            { name: 'All Time', value: `${totalAllTime}`, inline: true },
+            { name: 'All Time', value: `${totalAllTime} credit${monthlyCount !== 1 ? 's' : ''}`, inline: true },
             { name: 'Requirement Status', value: monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅ Graciously fulfilled' : '📝 Monthly credits still awaited', inline: true }
         )
         .setColor(monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 0x00AA55 : 0xFF9900);
@@ -1492,9 +1290,10 @@ function createStoreEmbed(guild) {
         .setTitle('Type&Draft Literary Emporium ☝️')
         .setDescription('Welcome to our humble establishment, where dedication to the craft is rewarded with privileges. Examine our current offerings, crafted with the utmost care for our literary community.')
         .addFields(
-            { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} feedback credits\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
+            { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} credit\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
+            { name: '📝 Chapter Lease', value: `Allows you to post one message in your bookshelf thread\n**Price:** ${STORE_ITEMS.lease.price} credit each\n**Note:** You can buy multiple leases at once by specifying quantity\n**Special Content:** Contact staff via ticket for free leases when posting maps, artwork, or other non-chapter content`, inline: false },
             { name: 'How to Earn Credits', value: `• **Provide feedback** to fellow writers in the designated forums\n• **Log contributions** with \`/feedback\` to earn 1 credit each\n• **Build your reputation** through meaningful engagement`, inline: false },
-            { name: 'Important Notice', value: `To post chapters in ${channels.bookshelf}, you need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned based on feedback quality). Each chapter posted costs 1 credit via \`/post_chapter\`.`, inline: false }
+            { name: 'How to Purchase', value: `• \`/buy shelf\` - Purchase bookshelf access\n• \`/buy lease\` - Purchase 1 chapter lease\n• \`/buy lease quantity:5\` - Purchase 5 chapter leases`, inline: false }
         )
         .setColor(0x2F3136)
         .setFooter({ text: 'All purchases support our thriving literary community.' });
@@ -1507,45 +1306,52 @@ async function handleBuyCommand(message, args) {
         return replyTemporaryMessage(message, { content: 'Pray, specify a valid item to purchase. Use `/store` to view available items.' });
     }
     
-    const result = await processPurchase(message.author.id, itemKey, message.member, message.guild);
-    const embed = createPurchaseResultEmbed(message.author, itemKey, result, message.guild);
+    const quantity = itemKey === 'lease' ? (parseInt(args[1]) || 1) : 1;
+    const result = await processPurchase(message.author.id, itemKey, quantity, message.member, message.guild);
+    const embed = createPurchaseResultEmbed(message.author, itemKey, quantity, result, message.guild);
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
 async function handleBuySlashCommand(interaction) {
     const itemKey = interaction.options.getString('item');
-    const result = await processPurchase(interaction.user.id, itemKey, interaction.member, interaction.guild);
-    const embed = createPurchaseResultEmbed(interaction.user, itemKey, result, interaction.guild);
+    const quantity = STORE_ITEMS[itemKey]?.allowQuantity ? (interaction.options.getInteger('quantity') || 1) : 1;
+    const result = await processPurchase(interaction.user.id, itemKey, quantity, interaction.member, interaction.guild);
+    const embed = createPurchaseResultEmbed(interaction.user, itemKey, quantity, result, interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-async function processPurchase(userId, itemKey, member, guild) {
+async function processPurchase(userId, itemKey, quantity, member, guild) {
     const item = STORE_ITEMS[itemKey];
     const userRecord = getUserData(userId);
+    const totalCost = item.price * quantity;
     
-    if (userRecord.purchases.includes(itemKey)) {
+    // For shelf purchases, check if already purchased
+    if (itemKey === 'shelf' && userRecord.purchases.includes(itemKey)) {
         return { success: false, reason: 'already_purchased' };
     }
     
-    if (userRecord.currentCredits < item.price) {
+    if (userRecord.currentCredits < totalCost) {
         return {
             success: false,
             reason: 'insufficient_credits',
-            needed: item.price - userRecord.currentCredits,
+            needed: totalCost - userRecord.currentCredits,
             current: userRecord.currentCredits,
-            price: item.price
+            totalCost: totalCost
         };
     }
     
-    if (spendCredits(userId, item.price)) {
-        userRecord.purchases.push(itemKey);
-        
-        if (item.role) {
-            await assignPurchaseRoles(member, guild, itemKey);
+    if (spendCredits(userId, totalCost)) {
+        if (itemKey === 'shelf') {
+            userRecord.purchases.push(itemKey);
+            if (item.role) {
+                await assignPurchaseRoles(member, guild, itemKey);
+            }
+        } else if (itemKey === 'lease') {
+            addLeases(userId, quantity);
         }
         
         await saveData();
-        return { success: true, creditsSpent: item.price };
+        return { success: true, creditsSpent: totalCost, quantity: quantity };
     }
     
     return { success: false, reason: 'unknown_error' };
@@ -1582,7 +1388,7 @@ async function assignPurchaseRoles(member, guild, itemKey) {
     }
 }
 
-function createPurchaseResultEmbed(user, itemKey, result, guild) {
+function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
     const item = STORE_ITEMS[itemKey];
     const channels = getClickableChannelMentions(guild);
     
@@ -1595,7 +1401,7 @@ function createPurchaseResultEmbed(user, itemKey, result, guild) {
             insufficient_credits: new EmbedBuilder()
                 .setTitle('Insufficient Credits')
                 .addFields({
-                    name: 'Required Amount', value: `${result.price} credit${result.price === 1 ? '' : 's'}`, inline: true
+                    name: 'Required Amount', value: `${result.totalCost} credit${result.totalCost === 1 ? '' : 's'}`, inline: true
                 }, {
                     name: 'Still Needed', value: `${result.needed} more credit${result.needed === 1 ? '' : 's'}`, inline: true
                 })
@@ -1605,16 +1411,28 @@ function createPurchaseResultEmbed(user, itemKey, result, guild) {
         return errorEmbeds[result.reason] || new EmbedBuilder().setTitle('Purchase Failed').setColor(0xFF6B6B);
     }
     
-    return new EmbedBuilder()
-        .setTitle('Purchase Completed Successfully ☝️')
-        .addFields(
-            { name: 'Item Purchased', value: `${item.emoji} ${item.name}`, inline: true },
-            { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
-            { name: 'Role Granted', value: `🎭 Shelf Owner`, inline: true },
-            { name: 'Important Notice', value: `⚠️ **reader role required separately from staff** to post chapters in ${channels.bookshelf} forum. Staff will review your feedback quality and assign the reader role when appropriate.`, inline: false },
-            { name: 'Next Steps', value: '1. Continue giving quality feedback to fellow writers\n2. Staff will review and assign reader role when ready\n3. Once you have both roles, use `/post_chapter` to post chapters (1 credit each)', inline: false }
-        )
-        .setColor(0x00AA55);
+    if (itemKey === 'shelf') {
+        return new EmbedBuilder()
+            .setTitle('Purchase Completed Successfully ☝️')
+            .addFields(
+                { name: 'Item Purchased', value: `${item.emoji} ${item.name}`, inline: true },
+                { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
+                { name: 'Role Granted', value: `🎭 Shelf Owner`, inline: true },
+                { name: 'Important Notice', value: `⚠️ **reader role required separately from staff** to post in ${channels.bookshelf} forum. Staff will review your feedback quality and assign the reader role when appropriate.`, inline: false },
+                { name: 'Next Steps', value: `1. Continue giving quality feedback to fellow writers\n2. Staff will review and assign reader role when ready\n3. Purchase chapter leases with \`/buy lease\` to post content (1 credit each)`, inline: false }
+            )
+            .setColor(0x00AA55);
+    } else if (itemKey === 'lease') {
+        return new EmbedBuilder()
+            .setTitle('Lease Purchase Completed ☝️')
+            .addFields(
+                { name: 'Item Purchased', value: `${item.emoji} ${quantity} Chapter Lease${quantity === 1 ? '' : 's'}`, inline: true },
+                { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
+                { name: 'Ready to Write', value: `You can now post ${quantity} message${quantity === 1 ? '' : 's'} in your bookshelf thread!`, inline: false },
+                { name: 'Special Content Notice', value: `Need to post maps, artwork, or other non-chapter content? Create a staff ticket to request free leases for special content that enriches your story.`, inline: false }
+            )
+            .setColor(0x00AA55);
+    }
 }
 
 // ===== STAFF COMMANDS =====
@@ -1865,6 +1683,66 @@ function createCreditBalanceModificationEmbed(user, amount, result, action) {
         .setColor(action === 'removed' ? 0xFF6B6B : 0x00AA55);
 }
 
+// ===== LEASE MANAGEMENT COMMANDS =====
+async function handleLeaseAddCommand(message, args) {
+    if (!hasStaffPermissions(message.member)) {
+        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions.');
+    }
+    
+    const user = message.mentions.users.first();
+    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose lease balance you wish to enhance.');
+    
+    const amount = Math.max(1, parseInt(args[1]) || 1);
+    console.log(`Staff adding ${amount} leases to ${user.displayName}`);
+    
+    const result = await addLeasesToUser(user.id, amount);
+    const embed = createLeaseModificationEmbed(user, amount, result, 'added');
+    await replyTemporaryMessage(message, { embeds: [embed] });
+}
+
+async function handleLeaseAddSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
+    console.log(`Staff adding ${amount} leases to ${user.displayName}`);
+    
+    const result = await addLeasesToUser(user.id, amount);
+    const embed = createLeaseModificationEmbed(user, amount, result, 'added');
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function addLeasesToUser(userId, amount) {
+    const userRecord = getUserData(userId);
+    const previousLeases = userRecord.chapterLeases;
+    
+    console.log(`Adding ${amount} leases to user ${userId}. Previous: ${previousLeases}`);
+    
+    addLeases(userId, amount);
+    
+    console.log(`New lease balance: ${userRecord.chapterLeases}`);
+    
+    await saveData();
+    return { 
+        previousLeases, 
+        newLeases: userRecord.chapterLeases
+    };
+}
+
+function createLeaseModificationEmbed(user, amount, result, action) {
+    return new EmbedBuilder()
+        .setTitle(`Chapter Leases ${action === 'removed' ? 'Reduced' : 'Enhanced'} ☝️`)
+        .addFields(
+            { name: 'Previous Leases', value: `📄 ${result.previousLeases} lease${result.previousLeases !== 1 ? 's' : ''}`, inline: true },
+            { name: 'Current Leases', value: `📄 ${result.newLeases} lease${result.newLeases !== 1 ? 's' : ''}`, inline: true },
+            { name: `Leases ${action === 'removed' ? 'Removed' : 'Added'}`, value: `${action === 'removed' ? '-' : '+'}${amount}`, inline: true },
+            { name: 'Note', value: 'These leases can be used to post content in bookshelf threads', inline: false }
+        )
+        .setColor(action === 'removed' ? 0xFF6B6B : 0x00AA55);
+}
+
 // ===== FEEDBACK RESET COMMANDS =====
 async function handleFeedbackResetCommand(message) {
     if (!hasStaffPermissions(message.member)) {
@@ -1894,12 +1772,14 @@ async function performCompleteReset(userId, guild) {
     const previousCount = getUserMonthlyFeedback(userId);
     const userRecord = getUserData(userId);
     const previousAllTime = userRecord.totalFeedbackAllTime;
+    const previousLeases = userRecord.chapterLeases;
     const hadShelfAccess = userRecord.purchases.includes('shelf');
     
     setUserMonthlyFeedback(userId, 0);
     userRecord.totalFeedbackAllTime = 0;
     userRecord.currentCredits = 0;
     userRecord.bookshelfPosts = 0;
+    userRecord.chapterLeases = 0;
     userRecord.purchases = userRecord.purchases.filter(item => item !== 'shelf');
     
     const targetMember = guild.members.cache.get(userId);
@@ -1914,6 +1794,7 @@ async function performCompleteReset(userId, guild) {
     return {
         previousCount,
         previousAllTime,
+        previousLeases,
         hadShelfAccess,
         closedThreads
     };
@@ -1941,10 +1822,11 @@ function createResetEmbed(user, resetData) {
         .addFields(
             { name: 'Previous Monthly Count', value: `${resetData.previousCount}`, inline: true },
             { name: 'Previous All-Time Total', value: `${resetData.previousAllTime}`, inline: true },
+            { name: 'Previous Chapter Leases', value: `${resetData.previousLeases}`, inline: true },
             { name: 'Current Status', value: '**Everything reset to zero**', inline: true },
             { name: 'Bookshelf Access', value: resetData.hadShelfAccess ? '📚 Shelf Owner role removed' : '📚 No previous access', inline: true },
             { name: 'Threads Closed', value: `🔒 ${resetData.closedThreads} thread${resetData.closedThreads !== 1 ? 's' : ''} archived and locked`, inline: true },
-            { name: 'Action Taken', value: 'Complete reset: monthly count, all-time total, purchases cleared, Shelf Owner role removed, message credits reset, and all threads closed', inline: false }
+            { name: 'Action Taken', value: 'Complete reset: monthly count, all-time total, chapter leases, purchases cleared, Shelf Owner role removed, and all threads closed', inline: false }
         )
         .setColor(0xFF6B6B);
 }
@@ -1995,10 +1877,9 @@ async function handlePardonSlashCommand(interaction) {
 
 function createPardonEmbed(user, action) {
     return new EmbedBuilder()
-        .setTitle('Monthly Requirement Pardon Granted ☝️')
+        .setTitle('Pardon Granted ☝️')
         .addFields(
-            { name: 'Pardoned User', value: `${user.displayName}`, inline: true },
-            { name: 'Effective Period', value: `Current month only`, inline: true }
+            { name: 'Pardoned User', value: `${user.displayName}`, inline: true }
         )
         .setColor(0x00AA55);
 }
@@ -2159,9 +2040,79 @@ function createBookshelfGrantEmbed(user, result) {
         .setTitle('Bookshelf Access Granted ☝️')
         .addFields(
             { name: 'Privileges Achieved', value: '📚 Shelf Owner role\n🎭 Thread creation access', inline: false },
-            { name: 'Important Note', value: '⚠️ **reader role still required from staff** to post chapters. This grants thread creation only.', inline: false }
+            { name: 'Important Note', value: '⚠️ **reader role still required from staff** to post content. User must also purchase chapter leases to post messages.', inline: false }
         )
         .setColor(0x00AA55);
+}
+
+// ===== PURGE LIST COMMANDS =====
+async function handlePurgeListCommand(message) {
+    if (!hasStaffPermissions(message.member)) {
+        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my liege.');
+    }
+    
+    const embed = await createPurgeListEmbed(message.guild);
+    await replyTemporaryMessage(message, { embeds: [embed] });
+}
+
+async function handlePurgeListSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const embed = await createPurgeListEmbed(interaction.guild);
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function createPurgeListEmbed(guild) {
+    const allMembers = await guild.members.fetch();
+    
+    let purgeList = '';
+    let pardonedList = '';
+    let purgeCount = 0;
+    let pardonedCount = 0;
+    
+    // Process each Level 5 member
+    allMembers.forEach((member, userId) => {
+        if (hasLevel5Role(member)) {
+            const monthlyCount = getUserMonthlyFeedback(userId);
+            const isPardoned = isUserPardoned(userId);
+            const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
+            
+            if (!meetingRequirement && !isPardoned) {
+                // Would be purged
+                purgeCount++;
+                purgeList += `❌ **${member.displayName}** (${monthlyCount} credits)\n`;
+            } else if (!meetingRequirement && isPardoned) {
+                // Pardoned from purge
+                pardonedCount++;
+                pardonedList += `✅ **${member.displayName}** (${monthlyCount} credits)\n`;
+            }
+        }
+    });
+    
+    // Truncate lists if too long
+    if (purgeList.length > 800) {
+        purgeList = purgeList.substring(0, 750) + '...\n*(List truncated)*';
+    }
+    if (pardonedList.length > 200) {
+        pardonedList = pardonedList.substring(0, 150) + '...\n*(List truncated)*';
+    }
+    
+    if (!purgeList) purgeList = '• No members would be purged this month';
+    if (!pardonedList) pardonedList = '• No pardoned members this month';
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Monthly Purge List ☝️')
+        .setDescription('Do not be alarmed, my liege. This list merely reflects the current status quo, but it is subject to change depending on the actions of our noble writers.')
+        .addFields(
+            { name: `🔥 Would Be Purged (${purgeCount})`, value: purgeList, inline: false },
+            { name: `🛡️ Pardoned from Purge (${pardonedCount})`, value: pardonedList, inline: false },
+            { name: 'Requirements', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: false }
+        )
+        .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
+    
+    return embed;
 }
 
 // ===== HELP AND COMMANDS =====
@@ -2181,7 +2132,7 @@ function createAllCommandsEmbed() {
         .addFields(
             { 
                 name: '👑 Feedback Management', 
-                value: '`/feedback_add` - Add feedback credits (affects monthly, all-time, and current balance)\n`/feedback_remove` - Remove feedback credits (affects monthly, all-time, and current balance)\n`/feedback_reset` - Complete account reset\n`/credit_add` - Add to current credit balance only\n`/credit_remove` - Remove from current credit balance only', 
+                value: '`/feedback_add` - Add feedback credits (affects monthly, all-time, and current balance)\n`/feedback_remove` - Remove feedback credits (affects monthly, all-time, and current balance)\n`/feedback_reset` - Complete account reset\n`/credit_add` - Add to current credit balance only\n`/credit_remove` - Remove from current credit balance only\n`/lease_add` - Add chapter leases to a member', 
                 inline: false 
             },
             { 
@@ -2217,17 +2168,17 @@ function createHelpEmbed(guild) {
             },
             { 
                 name: '💰 Credit System', 
-                value: '`/balance` - Check your credits and chapter allowance\n`/feedback_status` - View monthly progress\n`/hall_of_fame` - See top contributors leaderboard', 
+                value: '`/balance` - Check your credits and lease availability\n`/feedback_status` - View monthly progress\n`/hall_of_fame` - See top contributors leaderboard', 
                 inline: false 
             },
             { 
                 name: '📚 Bookshelf Access', 
-                value: `\`/store\` - View all the items for sale in our store\n\`/buy shelf\` - Purchase a shelf (1 credit)\n**Important:** You need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned) to post in ${channels.bookshelf}`, 
+                value: `\`/store\` - View all the items for sale in our store\n\`/buy shelf\` - Purchase bookshelf access (1 credit)\n**Important:** You need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned) to create threads in ${channels.bookshelf}`, 
                 inline: false 
             },
             { 
-                name: '✍️ How to Post', 
-                value: 'After you have purchased your shelf from the store, you may post chapters using the `/post_chapter` command. (costs 1 credit each)', 
+                name: '✍️ Chapter Posting', 
+                value: 'After gaining bookshelf access:\n1. Purchase chapter leases with `/buy lease` (1 credit each)\n2. Create your thread in the bookshelf forum\n3. Each message you post will automatically consume one lease\n4. Contact staff via ticket for free leases when posting maps, artwork, or special content', 
                 inline: false 
             },
             { 
@@ -2292,4 +2243,4 @@ async function sendStaffOnlyMessage(target, isInteraction = false) {
 }
 
 // ===== BOT LOGIN =====
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login(process.env.DISCORD_BOT2_TOKEN);
