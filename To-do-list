@@ -74,6 +74,7 @@ Version 12:
 
 1. Update the staff command bot embedded message texts.
 2. Remove the /feedback_status becuase it is redundant.
+3. the setup_bookshelf command doesn't work the way it should have to.
 
 In the code:
 
