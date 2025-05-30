@@ -368,6 +368,20 @@ function getClickableChannelMentions(guild) {
     };
 }
 
+// ===== ROLE MENTION HELPER FUNCTIONS =====
+function getRoleMention(guild, roleName) {
+    const role = guild.roles.cache.find(r => r.name === roleName);
+    return role ? `<@&${role.id}>` : `**${roleName}**`;
+}
+
+function getClickableRoleMentions(guild) {
+    return {
+        shelfOwner: getRoleMention(guild, 'Shelf Owner'),
+        reader: getRoleMention(guild, 'reader'),
+        level5: getRoleMention(guild, 'Level 5')
+    };
+}
+
 // ===== UTILITY FUNCTIONS =====
 function getCurrentMonthKey() {
     const now = new Date();
@@ -485,14 +499,15 @@ function addLeases(userId, amount) {
     console.log(`Added ${amount} leases to user ${userId}. Total: ${user.chapterLeases}`);
 }
 
-function getBookshelfAccessStatus(userId, member = null) {
+function getBookshelfAccessStatus(userId, member = null, guild = null) {
     const user = getUserData(userId);
+    const roles = guild ? getClickableRoleMentions(guild) : { reader: '**reader**' };
     
     if (user.purchases.includes('shelf')) {
         if (member && hasReaderRole(member)) {
             return '✅ Full bookshelf access granted';
         } else {
-            return '✅ Shelf Owner role acquired - reader role needed from staff';
+            return `✅ Shelf Owner role acquired - ${roles.reader} role needed from staff`;
         }
     } else if (user.totalFeedbackAllTime < 1) {
         return `📝 Need 1 more credit to qualify for bookshelf purchase`;
@@ -501,8 +516,9 @@ function getBookshelfAccessStatus(userId, member = null) {
     }
 }
 
-function getLeaseStatus(userId, member) {
+function getLeaseStatus(userId, member, guild = null) {
     const user = getUserData(userId);
+    const roles = guild ? getClickableRoleMentions(guild) : { reader: '**reader**' };
     
     if (user.totalFeedbackAllTime < 1) {
         return `📝 Need bookshelf access to purchase leases`;
@@ -513,7 +529,7 @@ function getLeaseStatus(userId, member) {
     }
     
     if (!member || !hasReaderRole(member)) {
-        return '🔓 Awaiting reader role from staff';
+        return `🔓 Awaiting ${roles.reader} role from staff`;
     }
     
     if (user.chapterLeases > 0) {
@@ -960,12 +976,14 @@ client.on('threadCreate', async (thread) => {
                 try {
                     const dmChannel = await member.createDM();
                     const channels = getClickableChannelMentions(thread.guild);
+                    const roles = getClickableRoleMentions(thread.guild);
+                    
                     const embed = new EmbedBuilder()
                         .setTitle('Bookshelf Thread Removed ☝️')
                         .addFields(
-                            { name: 'Requirements to Create Bookshelf Threads', value: `• **Shelf Owner** role (purchasable with 1 credit via \`/buy shelf\`)\n• **reader** role (assigned by staff based on feedback quality)`, inline: false },
+                            { name: 'Requirements to Create Bookshelf Threads', value: `• ${roles.shelfOwner} role (purchasable with 1 credit via \`/buy shelf\`)\n• ${roles.reader} role (assigned by staff based on feedback quality)`, inline: false },
                             { name: 'Your Current Status', value: `• Shelf Owner: ${hasShelfRole(member) ? '✅' : '❌'}\n• reader: ${hasReaderRole(member) ? '✅' : '❌'}`, inline: false },
-                            { name: 'How to Gain Access', value: `1. Give feedback to fellow writers and log it with \`/feedback\`\n2. Purchase shelf access with \`/buy shelf\`\n3. Staff will review your feedback quality and assign you the reader role if your feedback is sufficient\n4. Once you have both roles, you can create ${channels.bookshelf} threads`, inline: false }
+                            { name: 'How to Gain Access', value: `1. Give feedback to fellow writers and log it with \`/feedback\`\n2. Purchase shelf access with \`/buy shelf\`\n3. Staff will review your feedback quality and assign you the ${roles.reader} role if your feedback is sufficient\n4. Once you have both roles, you can create ${channels.bookshelf} threads`, inline: false }
                         )
                         .setColor(0xFF9900);
                     
@@ -1159,13 +1177,16 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         console.log('Could not fetch member, using existing member object');
     }
     
+    const guild = channel.guild;
+    const roles = getClickableRoleMentions(guild);
+    
     // Check if user has Level 5 role
     if (!hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
-            .setTitle('Level 5 Required ☝️')
+            .setTitle(`${roles.level5} Required ☝️`)
             .addFields({
                 name: 'How to Gain Access',
-                value: 'Continue participating in the server activities and earning experience to reach Level 5 status.',
+                value: `Continue participating in the server activities and earning experience to reach ${roles.level5} status.`,
                 inline: false
             })
             .setColor(0xFF9900);
@@ -1177,7 +1198,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         }
     }
     
-    const guild = channel.guild;
     const channels = getClickableChannelMentions(guild);
     
     if (!isInAllowedFeedbackThread(channel)) {
@@ -1272,18 +1292,18 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
 async function handleBalanceCommand(message) {
     const user = message.mentions.users.first() || message.author;
     const member = message.mentions.members.first() || message.member;
-    const embed = createBalanceEmbed(user, member);
+    const embed = createBalanceEmbed(user, member, message.guild);
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
 async function handleBalanceSlashCommand(interaction) {
     const user = interaction.options.getUser('user') || interaction.user;
     const member = interaction.options.getMember('user') || interaction.member;
-    const embed = createBalanceEmbed(user, member);
+    const embed = createBalanceEmbed(user, member, interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-function createBalanceEmbed(user, member) {
+function createBalanceEmbed(user, member, guild) {
     const userId = user.id;
     const userRecord = getUserData(userId);
     const monthlyCount = getUserMonthlyFeedback(userId);
@@ -1297,7 +1317,7 @@ function createBalanceEmbed(user, member) {
             { name: 'Current Credit Balance', value: `💰 ${userRecord.currentCredits}`, inline: true },
             { name: 'Chapter Leases', value: `📄 ${userRecord.chapterLeases}`, inline: true },
             { name: 'Monthly Quota', value: `${monthlyQuotaStatus}`, inline: true },
-            { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId, member), inline: true }
+            { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId, member, guild), inline: true }
         )
         .setColor(canPostInBookshelf(userId, member) ? 0x00AA55 : 0xFF9900);
 }
@@ -1364,11 +1384,12 @@ async function handleStoreSlashCommand(interaction) {
 
 function createStoreEmbed(guild) {
     const channels = getClickableChannelMentions(guild);
+    const roles = getClickableRoleMentions(guild);
     
     return new EmbedBuilder()
         .setTitle('Type&Draft Literary Emporium ☝️')
         .addFields(
-            { name: '📚 Bookshelf Access', value: `Grants you the **Shelf Owner** role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} credit\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
+            { name: '📚 Bookshelf Access', value: `Grants you the ${roles.shelfOwner} role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} credit\n**Note:** ${roles.reader} role must be assigned by staff separately based on feedback quality`, inline: false },
             { name: '📝 Chapter Lease', value: `Allows you to post one message in your bookshelf thread\n**Price:** ${STORE_ITEMS.lease.price} credit each\n**Note:** You can buy multiple leases at once by specifying quantity\n**Special Content:** Contact staff via ticket for free leases when posting maps, artwork, or other non-chapter content`, inline: false },
             { name: 'How to Purchase', value: `• \`/buy shelf\` - Purchase bookshelf access\n• \`/buy lease\` - Purchase 1 chapter lease\n• \`/buy lease quantity:5\` - Purchase 5 chapter leases`, inline: false }
         )
@@ -1468,6 +1489,7 @@ async function assignPurchaseRoles(member, guild, itemKey) {
 function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
     const item = STORE_ITEMS[itemKey];
     const channels = getClickableChannelMentions(guild);
+    const roles = getClickableRoleMentions(guild);
     
     if (!result.success) {
         const errorEmbeds = {
@@ -1494,9 +1516,9 @@ function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
             .addFields(
                 { name: 'Item Purchased', value: `${item.emoji} ${item.name}`, inline: true },
                 { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
-                { name: 'Role Granted', value: `🎭 Shelf Owner`, inline: true },
-                { name: 'Important Notice', value: `⚠️ **reader role required separately from staff** to post in ${channels.bookshelf} forum. Staff will review your feedback quality and assign the reader role when appropriate.`, inline: false },
-                { name: 'Next Steps', value: `1. Continue giving quality feedback to fellow writers\n2. Staff will review and assign reader role when ready\n3. Purchase chapter leases with \`/buy lease\` to post content (1 credit each)`, inline: false }
+                { name: 'Role Granted', value: `🎭 ${roles.shelfOwner}`, inline: true },
+                { name: 'Important Notice', value: `⚠️ **${roles.reader} role required separately from staff** to post in ${channels.bookshelf} forum. Staff will review your feedback quality and assign the ${roles.reader} role when appropriate.`, inline: false },
+                { name: 'Next Steps', value: `1. Continue giving quality feedback to fellow writers\n2. Staff will review and assign ${roles.reader} role when ready\n3. Purchase chapter leases with \`/buy lease\` to post content (1 credit each)`, inline: false }
             )
             .setColor(0x00AA55);
     } else if (itemKey === 'lease') {
@@ -1549,6 +1571,7 @@ async function postServerGuide(channel) {
         console.log(`Guild: ${guild.name}`);
         
         const channels = getClickableChannelMentions(guild);
+        const roles = getClickableRoleMentions(guild);
         console.log('Channels object:', channels);
         
         const embed = new EmbedBuilder()
@@ -1570,12 +1593,12 @@ async function postServerGuide(channel) {
                 },
                 {
                     name: '📚 The Citadel',
-                    value: `**Level 5 Required:** Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
+                    value: `**${roles.level5} Required:** Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
                     inline: false
                 },
                 {
                     name: '💰 Our Credit Economy',
-                    value: '• **Earn:** 1 credit per quality feedback (Level 5+ only)\n• **Purchase:** Bookshelf access (1 credit)\n• **Post:** Chapter leases (1 credit each) to publish your work',
+                    value: `• **Earn:** 1 credit per quality feedback (${roles.level5}+ only)\n• **Purchase:** Bookshelf access (1 credit)\n• **Post:** Chapter leases (1 credit each) to publish your work`,
                     inline: false
                 }
             )
@@ -1594,7 +1617,8 @@ async function postServerGuide(channel) {
 
 async function postRules(channel) {
     const guild = channel.guild;
-    const channels = getClickableChannelMentions(guild)
+    const channels = getClickableChannelMentions(guild);
+    const roles = getClickableRoleMentions(guild);
 
     const embed = new EmbedBuilder()
         .setTitle('The Nine Laws of Type&Draft ☝️')
@@ -1611,7 +1635,7 @@ async function postRules(channel) {
             },
             {
                 name: '📜 The Third Law',
-                value: `Upon earning access to our ${channels.bookshelf} forum, you may post chapters using chapter leases. The preferred format of feedback in our server is Google Docs, albeit you can deter from it, as long as your contribution is sufficient. **Provide at least one quality feedback or face purging.** Poorly executed feedback shall not count toward your quota. New members must reach Level 5 in a month; failure to comply will result in removal from the server. This is a necessary measure to maintain our community\'s integrity, and ensure all members contribute meaningfully.`,
+                value: `Upon earning access to our ${channels.bookshelf} forum, you may post chapters using chapter leases. The preferred format of feedback in our server is Google Docs, albeit you can deter from it, as long as your contribution is sufficient. **Provide at least one quality feedback or face purging.** Poorly executed feedback shall not count toward your quota. New members must reach ${roles.level5} in a month; failure to comply will result in removal from the server. This is a necessary measure to maintain our community\'s integrity, and ensure all members contribute meaningfully.`,
                 inline: false
             },
             {
@@ -1957,7 +1981,7 @@ async function handleFeedbackResetCommand(message) {
     if (!user) return replyTemporaryMessage(message, { content: 'Pray, mention the writer whose record you wish to reset to a clean slate.' });
     
     const resetData = await performCompleteReset(user.id, message.guild);
-    const embed = createResetEmbed(user, resetData);
+    const embed = createResetEmbed(user, resetData, message.guild);
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
@@ -1968,7 +1992,7 @@ async function handleFeedbackResetSlashCommand(interaction) {
     
     const user = interaction.options.getUser('user');
     const resetData = await performCompleteReset(user.id, interaction.guild);
-    const embed = createResetEmbed(user, resetData);
+    const embed = createResetEmbed(user, resetData, interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
@@ -2020,7 +2044,9 @@ async function removeUserRoles(member, guild) {
     }
 }
 
-function createResetEmbed(user, resetData) {
+function createResetEmbed(user, resetData, guild) {
+    const roles = getClickableRoleMentions(guild);
+    
     return new EmbedBuilder()
         .setTitle('Complete Literary Record Reset ☝️')
         .addFields(
@@ -2028,9 +2054,9 @@ function createResetEmbed(user, resetData) {
             { name: 'Previous All-Time Total', value: `${resetData.previousAllTime}`, inline: true },
             { name: 'Previous Chapter Leases', value: `${resetData.previousLeases}`, inline: true },
             { name: 'Current Status', value: '**Everything reset to zero**', inline: true },
-            { name: 'Bookshelf Access', value: resetData.hadShelfAccess ? '📚 Shelf Owner role removed' : '📚 No previous access', inline: true },
+            { name: 'Bookshelf Access', value: resetData.hadShelfAccess ? `📚 ${roles.shelfOwner} role removed` : '📚 No previous access', inline: true },
             { name: 'Threads Closed', value: `🔒 ${resetData.closedThreads} thread${resetData.closedThreads !== 1 ? 's' : ''} archived and locked`, inline: true },
-            { name: 'Action Taken', value: 'Complete reset: monthly count, all-time total, chapter leases, purchases cleared, Shelf Owner role removed, and all threads closed', inline: false }
+            { name: 'Action Taken', value: `Complete reset: monthly count, all-time total, chapter leases, purchases cleared, ${roles.shelfOwner} role removed, and all threads closed`, inline: false }
         )
         .setColor(0xFF6B6B);
 }
@@ -2067,11 +2093,12 @@ async function handlePardonSlashCommand(interaction) {
     
     const user = interaction.options.getUser('user');
     const member = interaction.guild.members.cache.get(user.id);
+    const roles = getClickableRoleMentions(interaction.guild);
     
     if (!member || !hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
             .setTitle('Invalid Target')
-            .setDescription('I regret that the mentioned user does not possess the Level 5 role and thus requires no pardon.')
+            .setDescription(`I regret that the mentioned user does not possess the ${roles.level5} role and thus requires no pardon.`)
             .setColor(0xFF9900);
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
@@ -2098,11 +2125,12 @@ async function handleUnpardonSlashCommand(interaction) {
     
     const user = interaction.options.getUser('user');
     const member = interaction.guild.members.cache.get(user.id);
+    const roles = getClickableRoleMentions(interaction.guild);
     
     if (!member || !hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
             .setTitle('Invalid Target')
-            .setDescription('I regret that the mentioned user does not possess the Level 5 role and thus has no pardon to revoke.')
+            .setDescription(`I regret that the mentioned user does not possess the ${roles.level5} role and thus has no pardon to revoke.`)
             .setColor(0xFF9900);
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
@@ -2159,7 +2187,7 @@ async function handleManualPurgeSlashCommand(interaction) {
     await interaction.deferReply();
     
     const result = await performManualPurge(interaction.guild);
-    const embed = createManualPurgeResultEmbed(result);
+    const embed = createManualPurgeResultEmbed(result, interaction.guild);
     
     await interaction.editReply({ embeds: [embed] });
 }
@@ -2191,8 +2219,9 @@ async function performManualPurge(guild) {
     let failedKicks = [];
     let protectedMembers = [];
     
-    // Find all members who should be purged
+    // Find all Level 5 members who should be purged
     for (const [userId, member] of allMembers) {
+        if (!hasLevel5Role(member)) continue;
         
         const monthlyCount = getUserMonthlyFeedback(userId);
         const isPardoned = isUserPardoned(userId);
@@ -2247,8 +2276,9 @@ async function performManualPurge(guild) {
     };
 }
 
-function createManualPurgeResultEmbed(result) {
+function createManualPurgeResultEmbed(result, guild) {
     const { purgedMembers, failedKicks, protectedMembers, totalPurged, totalFailed, totalProtected } = result;
+    const roles = getClickableRoleMentions(guild);
     
     let purgedList = '';
     if (purgedMembers.length > 0) {
@@ -2293,8 +2323,8 @@ function createManualPurgeResultEmbed(result) {
         .setTitle('Manual Purge Completed ☝️')
         .setDescription('The monthly purge has been executed with the precision befitting our literary standards.')
         .addFields(
-            { name: `Successfully Purged (${totalPurged})`, value: purgedList, inline: false },
-            { name: `Protected from Purge (${totalProtected})`, value: protectedList, inline: false }
+            { name: `🔥 Successfully Purged (${totalPurged})`, value: purgedList, inline: false },
+            { name: `🛡️ Protected from Purge (${totalProtected})`, value: protectedList, inline: false }
         )
         .setColor(totalFailed === 0 ? 0x00AA55 : 0xFF9900)
         .setTimestamp();
@@ -2336,6 +2366,7 @@ async function handleStatsSlashCommand(interaction) {
 
 async function createStatsEmbed(guild) {
     const totalMembers = guild.memberCount;
+    const roles = getClickableRoleMentions(guild);
     
     // Get all Level 5 members
     const level5Members = guild.members.cache.filter(member => hasLevel5Role(member));
@@ -2375,7 +2406,7 @@ async function createStatsEmbed(guild) {
     if (pardonedList) level5Details += pardonedList;
     if (nonFulfillmentList) level5Details += nonFulfillmentList;
     
-    if (!level5Details) level5Details = '• No Level 5 members found';
+    if (!level5Details) level5Details = `• No ${roles.level5} members found`;
     if (level5Details.length > 1024) {
         level5Details = level5Details.substring(0, 1000) + '...\n*(List truncated)*';
     }
@@ -2390,11 +2421,11 @@ async function createStatsEmbed(guild) {
             { name: 'Monthly Participation Rate', value: `${contributionRate}%`, inline: true },
             { name: 'Community Health', value: contributionRate >= 70 ? '✅ Flourishing' : contributionRate >= 50 ? '⚠️ Moderate' : '🔴 Requires attention', inline: true },
             { name: 'Pardoned This Month', value: `${pardonedCount} members`, inline: true },
-            { name: 'Overview', value: `• **${totalLevel5}** total Level 5 members\n• **${monthlyContributors}** meeting requirements\n• **${pardonedCount}** pardoned this month`, inline: false },
+            { name: 'Overview', value: `• **${totalLevel5}** total ${roles.level5} members\n• **${monthlyContributors}** meeting requirements\n• **${pardonedCount}** pardoned this month`, inline: false },
             { name: 'Detailed Status', value: level5Details, inline: false }
         )
         .setColor(contributionRate >= 70 ? 0x00AA55 : contributionRate >= 50 ? 0xFF9900 : 0xFF4444)
-        .setFooter({ text: 'Monthly purge kicks inactive Level 5 members since July 2025 • ✅ = Meeting requirement • ❌ = Below requirement' });
+        .setFooter({ text: `Monthly purge kicks inactive ${roles.level5} members since July 2025 • ✅ = Meeting requirement • ❌ = Below requirement` });
     
     return embed;
 }
@@ -2409,7 +2440,7 @@ async function handleSetupBookshelfCommand(message, args) {
     if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer to whom you wish to grant bookshelf privileges.');
     
     const result = await grantBookshelfAccess(user.id, message.guild.members.cache.get(user.id), message.guild);
-    const embed = createBookshelfGrantEmbed(user, result);
+    const embed = createBookshelfGrantEmbed(user, result, message.guild);
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
@@ -2421,7 +2452,7 @@ async function handleSetupBookshelfSlashCommand(interaction) {
     const user = interaction.options.getUser('user');
     const member = interaction.guild.members.cache.get(user.id);
     const result = await grantBookshelfAccess(user.id, member, interaction.guild);
-    const embed = createBookshelfGrantEmbed(user, result);
+    const embed = createBookshelfGrantEmbed(user, result, interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
@@ -2454,7 +2485,9 @@ async function grantBookshelfAccess(userId, member, guild) {
     return { success: true };
 }
 
-function createBookshelfGrantEmbed(user, result) {
+function createBookshelfGrantEmbed(user, result, guild) {
+    const roles = getClickableRoleMentions(guild);
+    
     if (!result.success) {
         const errorMessages = {
             already_has_access: new EmbedBuilder()
@@ -2467,8 +2500,8 @@ function createBookshelfGrantEmbed(user, result) {
     return new EmbedBuilder()
         .setTitle('Bookshelf Access Granted ☝️')
         .addFields(
-            { name: 'Privileges Achieved', value: '📚 Shelf Owner role\n🎭 Thread creation access', inline: false },
-            { name: 'Important Note', value: '⚠️ **reader role still required from staff** to post content. User must also purchase chapter leases to post messages.', inline: false }
+            { name: 'Privileges Achieved', value: `📚 ${roles.shelfOwner} role\n🎭 Thread creation access`, inline: false },
+            { name: 'Important Note', value: `⚠️ **${roles.reader} role still required from staff** to post content. User must also purchase chapter leases to post messages.`, inline: false }
         )
         .setColor(0x00AA55);
 }
@@ -2494,6 +2527,7 @@ async function handlePurgeListSlashCommand(interaction) {
 
 async function createPurgeListEmbed(guild) {
     const allMembers = await guild.members.fetch();
+    const roles = getClickableRoleMentions(guild);
     
     let purgeList = '';
     let pardonedList = '';
@@ -2502,9 +2536,10 @@ async function createPurgeListEmbed(guild) {
     let pardonedCount = 0;
     let protectedCount = 0;
     
-    // Process each member
+    // Process each Level 5 member
     allMembers.forEach((member, userId) => {
-
+        if (!hasLevel5Role(member)) return;
+        
         const monthlyCount = getUserMonthlyFeedback(userId);
         const isPardoned = isUserPardoned(userId);
         const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
@@ -2527,7 +2562,7 @@ async function createPurgeListEmbed(guild) {
     
     // Truncate lists if too long
     if (purgeList.length > 700) {
-        purgeList = purgeList.substring(0, 650);
+        purgeList = purgeList.substring(0, 650) + '...\n*(List truncated)*';
     }
     if (pardonedList.length > 200) {
         pardonedList = pardonedList.substring(0, 150) + '...\n*(List truncated)*';
@@ -2546,7 +2581,7 @@ async function createPurgeListEmbed(guild) {
         .addFields(
             { name: `🔥 To be Purged (${purgeCount})`, value: purgeList, inline: false },
             { name: `🛡️ Pardoned from Purge (${pardonedCount})`, value: pardonedList, inline: false },
-            { name: 'Notes', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: false }
+            { name: 'Notes', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}\n• **Only ${roles.level5} members** are subject to purging`, inline: false }
         )
         .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
     
@@ -2595,12 +2630,13 @@ async function handleHelpSlashCommand(interaction) {
 
 function createHelpEmbed(guild) {
     const channels = getClickableChannelMentions(guild);
+    const roles = getClickableRoleMentions(guild);
     
     return new EmbedBuilder()
         .setTitle('Essential Commands at Your Service ☝️')
         .addFields(
             { 
-                name: '📝 Earning Feedback Credits (Level 5 Required)', 
+                name: `📝 Earning Feedback Credits (${roles.level5} Required)`, 
                 value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful feedback\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback!`, 
                 inline: false 
             },
@@ -2611,7 +2647,7 @@ function createHelpEmbed(guild) {
             },
             { 
                 name: '📚 Bookshelf Access', 
-                value: `\`/store\` - View all the items for sale in our store\n\`/buy shelf\` - Purchase bookshelf access (1 credit)\n**Important:** You need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned) to create threads in ${channels.bookshelf}`, 
+                value: `\`/store\` - View all the items for sale in our store\n\`/buy shelf\` - Purchase bookshelf access (1 credit)\n**Important:** You need **both** the ${roles.shelfOwner} role (purchasable) **and** the ${roles.reader} role (staff-assigned) to create threads in ${channels.bookshelf}`, 
                 inline: false 
             },
             { 
