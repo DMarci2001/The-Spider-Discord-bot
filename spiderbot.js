@@ -353,6 +353,18 @@ function getClickableChannelMentions(guild) {
         rulesChannel: getChannelMention(guild, 'rules'),
         serverGuideChannel: getChannelMention(guild, 'server-guide'),
         botStuff: getChannelMention(guild, 'bot-stuff'),
+        reactionRoles: getChannelMention(guild, 'reaction-roles'),
+        announcements: getChannelMention(guild, 'announcements'),
+        introductions: getChannelMention(guild, 'introductions'),
+        bump: getChannelMention(guild, 'bump'),
+        ticket: getChannelMention(guild, 'ticket'),
+        writingChat: getChannelMention(guild, 'writing-chat'),
+        actionHelp: getChannelMention(guild, 'action-help'),
+        dialogueHelp: getChannelMention(guild, 'dialogue-help'),
+        onePageCritique: getChannelMention(guild, 'one-page-critique'),
+        snippetShowcase: getChannelMention(guild, 'snippet-showcase'),
+        bookshelfMemes: getChannelMention(guild, 'bookshelf-memes'),
+        aiArt: getChannelMention(guild, 'ai-art')
     };
 }
 
@@ -875,6 +887,14 @@ const commands = [
     new SlashCommandBuilder()
         .setName('manual_purge')
         .setDescription('Manually purge all Level 5 members who don\'t meet monthly requirements (Staff only)'),
+
+    new SlashCommandBuilder()
+    .setName('post_server_guide')
+    .setDescription('Post the server navigation guide (Staff only)'),
+
+    new SlashCommandBuilder()
+    .setName('post_rules')
+    .setDescription('Post the server rules (Staff only)')
 ];
 
 async function registerCommands() {
@@ -1108,6 +1128,8 @@ async function handleSlashCommand(interaction) {
         unpardon: () => handleUnpardonSlashCommand(interaction),
         purge_list: () => handlePurgeListSlashCommand(interaction),
         manual_purge: () => handleManualPurgeSlashCommand(interaction),
+        post_server_guide: () => handlePostServerGuideSlashCommand(interaction),
+        post_rules: () => handlePostRulesSlashCommand(interaction)
     };
     
     const handler = commandHandlers[interaction.commandName];
@@ -1488,6 +1510,147 @@ function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
 }
 
 // ===== STAFF COMMANDS =====
+
+// Rules Message for #rules channel
+async function handlePostServerGuideSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    await postServerGuide(interaction.channel);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Server Guide Posted ☝️')
+        .setDescription('The navigation guide has been graciously posted to this channel.')
+        .setColor(0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handlePostRulesSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    await postRules(interaction.channel);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Rules Posted ☝️')
+        .setDescription('The literary laws have been graciously posted to this channel.')
+        .setColor(0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function postServerGuide(channel) {
+    try {
+        console.log('Starting postServerGuide function...');
+        const guild = channel.guild;
+        console.log(`Guild: ${guild.name}`);
+        
+        const channels = getClickableChannelMentions(guild);
+        console.log('Channels object:', channels);
+        
+        const embed = new EmbedBuilder()
+            .addFields(
+                {
+                    name: '🏛️ Welcome Halls',
+                    value: `${channels.reactionRoles} - Claim your roles with a simple reaction\n${channels.rulesChannel} - Our community covenant (read thoroughly)\n${channels.introductions} - Present yourself to our distinguished assembly\n${channels.bump} - Support our community growth with \`/bump\``,
+                    inline: false
+                },
+                {
+                    name: '🎫 Support Quarters',
+                    value: `${channels.ticket} - Private counsel with our esteemed staff\n${channels.botStuff} - My own domain. I advise you to take advantage of the \`/help\` command, so you can learn more about the server's inner workings`,
+                    inline: false
+                },
+                {
+                    name: '✍️ Scriptorium',
+                    value: `${channels.writingChat} - General discourse on the craft\nIn the help channels, our community provides specialized guidance\n${channels.onePageCritique} - Submit short excerpts for detailed feedback\n${channels.snippetShowcase} - Display your finest work for admiration`,
+                    inline: false
+                },
+                {
+                    name: '📚 The Sacred Library',
+                    value: `**Level 5 Required:** Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
+                    inline: false
+                },
+                {
+                    name: '💰 The Credit Economy',
+                    value: '• **Earn:** 1 credit per quality feedback (Level 5+ only)\n• **Purchase:** Bookshelf access (1 credit)\n• **Post:** Chapter leases (1 credit each) to publish your work',
+                    inline: false
+                }
+            )
+            .setColor(0xFF8C00)
+            .setFooter({ text: 'Your humble servant in all literary endeavors' });
+
+        console.log('Embed created successfully, sending...');
+        await channel.send({ embeds: [embed] });
+        console.log('Message sent successfully!');
+        
+    } catch (error) {
+        console.error('Error in postServerGuide:', error);
+        throw error; // Re-throw so the command handler can catch it
+    }
+}
+
+async function postRules(channel) {
+    const guild = channel.guild;
+    const channels = getClickableChannelMentions(guild)
+
+    const embed = new EmbedBuilder()
+        .setTitle('The Nine Laws of Type&Draft ☝️')
+        .addFields(
+            {
+                name: '📜 The First Law',
+                value: 'All discourse shall be respectful and courteous. Discrimination of any form is strictly forbidden in our halls.',
+                inline: false
+            },
+            {
+                name: '📜 The Second Law', 
+                value: 'Honor each channel\'s designated purpose. Writing matters belong in writing quarters, and likewise for all other subjects.',
+                inline: false
+            },
+            {
+                name: '📜 The Third Law',
+                value: `Upon earning access to our ${channels.bookshelf} forum, you may post chapters using chapter leases. The preferred format of feedback in our server is Google Docs, albeit you can deter from it, as long as your contribution is sufficient. **Provide at least one quality feedback or face purging.** Poorly executed feedback shall not count toward your quota. New members must reach Level 5 in a month; failure to comply will result in removal from the server. This is a necessary measure to maintain our community\'s integrity, and ensure all members contribute meaningfully.`,
+                inline: false
+            },
+            {
+                name: '📜 The Fourth Law',
+                value: `AI-generated artwork belongs solely in ${channels.aiArt}. AI-written work created from scratch is forbidden. Using AI as a writing tool is acceptable. Violations will be swiftly deleted.`,
+                inline: false
+            },
+            {
+                name: '📜 The Fifth Law',
+                value: 'Direct messages require explicit permission. Promotional spam results in immediate banishment. **Introduction requirement: State your lucky number and favorite animal to prove rule comprehension.**',
+                inline: false
+            },
+            {
+                name: '📜 The Sixth Law',
+                value: '**18+ members only.** Suspected minors must provide age verification (selfie + passport). Failure results in removal. No exceptions, even for tomorrow\'s birthdays.',
+                inline: false
+            },
+            {
+                name: '📜 The Seventh Law',
+                value: 'NSFW content is permitted within designated spaces. Pornography (content intended for sexual arousal) is strictly prohibited.',
+                inline: false
+            },
+            {
+                name: '📜 The Eighth Law',
+                value: 'Camaraderie and jest are welcomed, but respect all boundaries. Exercise common sense in all interactions.',
+                inline: false
+            },
+            {
+                name: '📜 The Final Law',
+                value: 'Arrogance has no place here. If you seek feedback, acknowledge you have room for growth. Dismissive attitudes toward our members result in immediate expulsion.',
+                inline: false
+            }
+        )
+        .setColor(0xFF8C00)
+        .setFooter({ text: 'Compliance ensures our community\'s continued prosperity' });
+
+    await channel.send({ embeds: [embed] });
+}
+
 async function handleFeedbackAddCommand(message, args) {
     if (!hasStaffPermissions(message.member)) {
         return replyTemporaryMessage(message, { content: 'I fear you lack the necessary authority to conduct such administrative actions.' });
