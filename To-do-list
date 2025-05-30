@@ -74,11 +74,106 @@ Version 6:
 
 1. Completely new members can leave a feedback command under threads without having posted a message there first.
 
-In the code:
+Version 16:
 
-1. Check for the term "literary community" in the code, and cut back on it.
-2. Check for "5+" and "1+" and delete the pluses.
-3. "Staff will review and assign reader role when ready" reword this message, and use @reader terminology.
+// ===== CUSTOMIZABLE FUN COMMANDS =====
+
+async function handleBurnSlashCommand(interaction) {
+    const target = interaction.options.getUser('user');
+    const roast = interaction.options.getString('roast');
+    
+    const embed = new EmbedBuilder()
+        .setTitle('A Most Elegant Roast ☝️')
+        .setDescription(`Ah, ${target}, ${roast} ☝️`)
+        .addFields({
+            name: 'Delivered by',
+            value: `${interaction.user.displayName}`,
+            inline: true
+        })
+        .setColor(0xFF4444)
+        .setFooter({ text: 'The Spider\'s wit flows through this vessel.' });
+    
+    await replyTemporary(interaction, { embeds: [embed] }, 15000);
+}
+
+async function handleTrialSlashCommand(interaction) {
+    const accused = interaction.options.getUser('user');
+    const crime = interaction.options.getString('crime');
+    const evidence = interaction.options.getString('evidence');
+    
+    let trialDescription = `⚖️ **COURT IS IN SESSION** ⚖️\n\n${accused} stands accused of **${crime}**!\n\nHow do you plead before this literary tribunal?`;
+    
+    if (evidence) {
+        trialDescription += `\n\n**Evidence Presented:**\n*"${evidence}"*`;
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('⚖️ Literary Court in Session ⚖️')
+        .setDescription(trialDescription + ' ☝️')
+        .addFields(
+            { name: 'Presiding Judge', value: `${interaction.user.displayName}`, inline: true },
+            { name: 'The Accused', value: `${accused.displayName}`, inline: true },
+            { name: 'Charges', value: crime, inline: true }
+        )
+        .setColor(0x4B0082)
+        .setFooter({ text: 'Justice is blind, but good writing is not.' });
+    
+    await replyTemporary(interaction, { embeds: [embed] }, 20000);
+}
+
+async function handleWalkOfShameSlashCommand(interaction) {
+    const target = interaction.options.getUser('user');
+    const sin = interaction.options.getString('sin');
+    
+    const shameMessage = `🔔 **SHAME!** 🔔 **SHAME!** 🔔 **SHAME!** 🔔\n\n${target} has committed the cardinal sin of **${sin}**!\n\nLet all witness their literary transgression and learn from their folly! ☝️`;
+    
+    const embed = new EmbedBuilder()
+        .setTitle('🔔 The Walk of Literary Shame 🔔')
+        .setDescription(shameMessage)
+        .addFields(
+            { name: 'Sentenced by', value: `${interaction.user.displayName}`, inline: true },
+            { name: 'The Transgression', value: sin, inline: true },
+            { name: 'Penance Required', value: 'Better writing practices', inline: true }
+        )
+        .setColor(0x8B4513)
+        .setFooter({ text: 'Confess your sins and write better.' });
+    
+    await replyTemporary(interaction, { embeds: [embed] }, 15000);
+}
+
+async function handleFacelessSlashCommand(interaction) {
+    const confession = interaction.options.getString('confession');
+    
+    // Find appropriate channel for confession
+    const confessionChannel = interaction.guild.channels.cache.find(ch => 
+        ch.name.includes('confession') || 
+        ch.name.includes('general') || 
+        ch.name.includes('chat') ||
+        ch.name.includes('writing-chat')
+    ) || interaction.channel;
+    
+    const embed = new EmbedBuilder()
+        .setTitle('🎭 Anonymous Confession 🎭')
+        .setDescription(`*"${confession}"*`)
+        .setColor(0x000000)
+        .setFooter({ text: 'A writer has no name, but has many secrets.' });
+    
+    // Send confession to the appropriate channel
+    if (confessionChannel.id !== interaction.channelId) {
+        await confessionChannel.send({ embeds: [embed] });
+        
+        // Confirm to user privately
+        await replyTemporary(interaction, { 
+            content: `Your confession has been delivered anonymously to ${confessionChannel}. The Many-Faced God is pleased. ☝️`,
+            ephemeral: true 
+        }, 8000);
+    } else {
+        // Send directly in current channel
+        await interaction.reply({ embeds: [embed] });
+    }
+}
+
+In the code:
 
 
 
