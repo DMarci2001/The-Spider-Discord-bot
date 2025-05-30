@@ -614,7 +614,7 @@ async function replyTemporaryMessage(message, messageOptions, delay = MESSAGE_DE
 async function saveData() {
     try {
         const data = { monthlyFeedback, userData, loggedFeedbackMessages, pardonedUsers };
-        await fs.writeFile('testbot_data.json', JSON.stringify(data, null, 2));
+        await fs.writeFile('bot_data.json', JSON.stringify(data, null, 2));
         console.log('Data saved successfully');
     } catch (error) {
         console.error('Error saving data:', error);
@@ -623,7 +623,7 @@ async function saveData() {
 
 async function loadData() {
     try {
-        const data = await fs.readFile('testbot_data.json', 'utf8');
+        const data = await fs.readFile('bot_data.json', 'utf8');
         const parsed = JSON.parse(data);
         monthlyFeedback = parsed.monthlyFeedback || {};
         userData = parsed.userData || {};
@@ -819,7 +819,7 @@ const commands = [
 
 async function registerCommands() {
     try {
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT2_TOKEN);
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
         console.log('Started refreshing application (/) commands.');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('Successfully reloaded application (/) commands.');
@@ -2243,4 +2243,4 @@ async function sendStaffOnlyMessage(target, isInteraction = false) {
 }
 
 // ===== BOT LOGIN =====
-client.login(process.env.DISCORD_BOT2_TOKEN);
+client.login(process.env.DISCORD_BOT_TOKEN);
