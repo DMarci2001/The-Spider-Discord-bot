@@ -1233,16 +1233,16 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         });
     }
     
-    // Create simple permanent confirmation message
+    // Create temporary confirmation message
     const confirmationMessage = `Feedback logged! ☝️`;
     
     console.log('Feedback command completed successfully');
     
-    // Send permanent simple reply (no timeout)
+    // Send temporary reply (8 second timeout)
     if (isSlash) {
-        await interaction.reply({ content: confirmationMessage });
+        await replyTemporary(interaction, { content: confirmationMessage }, 8000);
     } else {
-        await message.reply(confirmationMessage);
+        await replyTemporaryMessage(message, { content: confirmationMessage }, 8000);
     }
 }
 
