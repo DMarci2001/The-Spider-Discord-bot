@@ -111,6 +111,31 @@ async function sendActivityNotification(guild, type, data) {
                 )
                 .setColor(0xFF9900)
                 .setTimestamp();
+        } else if (type === 'feedback_posted') {
+            embed = new EmbedBuilder()
+                .setTitle('💬 Feedback Message Posted')
+                .addFields(
+                    { name: 'Thread', value: `[${data.thread.name}](${data.messageUrl})`, inline: false },
+                    { name: 'Forum', value: `<#${data.thread.parentId}>`, inline: true },
+                    { name: 'Author', value: `<@${data.userId}>`, inline: true },
+                    { name: 'Thread Owner', value: `<@${data.thread.ownerId}>`, inline: true },
+                    { name: 'Posted At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                    { name: 'Message Preview', value: `${data.messagePreview}`, inline: false }
+                )
+                .setColor(0x5865F2)
+                .setTimestamp();
+        } else if (type === 'thread_deleted') {
+            embed = new EmbedBuilder()
+                .setTitle('🗑️ Thread Deleted')
+                .addFields(
+                    { name: 'Thread Name', value: `${data.threadName}`, inline: false },
+                    { name: 'Forum', value: `<#${data.parentId}>`, inline: true },
+                    { name: 'Thread Owner', value: `<@${data.ownerId}>`, inline: true },
+                    { name: 'Deleted At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                    { name: 'Thread ID', value: `${data.threadId}`, inline: true }
+                )
+                .setColor(0xFF4444)
+                .setTimestamp();
         }
 
         if (embed) {
@@ -935,8 +960,42 @@ client.on('threadCreate', async (thread) => {
     }
 });
 
+client.on('threadDelete', async (thread) => {
+    // Send activity notification for deleted threads in monitored forums
+    if (thread.parent && MONITORED_FORUMS.includes(thread.parent.name)) {
+        console.log(`🗑️ Thread deleted in monitored forum: ${thread.name} in ${thread.parent.name}`);
+        await sendActivityNotification(thread.guild, 'thread_deleted', {
+            threadName: thread.name,
+            threadId: thread.id,
+            parentId: thread.parentId,
+            ownerId: thread.ownerId
+        });
+    }
+});
+
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
+
+    // ACTIVITY MONITORING: Monitor messages in bookshelf-feedback forum ONLY
+    if (message.channel.isThread() && 
+        message.channel.parent && 
+        message.channel.parent.name === 'bookshelf-feedback') {
+        
+        console.log(`💬 Message posted in ${message.channel.parent.name}: ${message.author.displayName}`);
+        
+        // Create message preview (truncate if too long)
+        let messagePreview = message.content || '*[No text content]*';
+        if (messagePreview.length > 100) {
+            messagePreview = messagePreview.substring(0, 97) + '...';
+        }
+        
+        await sendActivityNotification(message.guild, 'feedback_posted', {
+            thread: message.channel,
+            userId: message.author.id,
+            messageUrl: message.url,
+            messagePreview: messagePreview
+        });
+    }
 
     // BOOKSHELF THREAD HANDLING - SINGLE CHECK ONLY
     if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
@@ -2282,6 +2341,7 @@ async function createPurgeListEmbed(guild) {
     
     // Process each member
     allMembers.forEach((member, userId) => {
+        if (!hasLevel5Role(member)) return;
         
         const monthlyCount = getUserMonthlyFeedback(userId);
         const isPardoned = isUserPardoned(userId);
