@@ -2341,8 +2341,7 @@ async function createPurgeListEmbed(guild) {
     
     // Process each member
     allMembers.forEach((member, userId) => {
-        if (!hasLevel5Role(member)) return;
-        
+
         const monthlyCount = getUserMonthlyFeedback(userId);
         const isPardoned = isUserPardoned(userId);
         const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
