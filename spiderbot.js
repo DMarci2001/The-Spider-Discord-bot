@@ -1042,7 +1042,8 @@ client.on('messageCreate', async (message) => {
         if (message.channel.ownerId !== message.author.id) {
             await message.delete();
             await sendTemporaryChannelMessage(message.channel, 
-                `I am terribly sorry, **${message.author.displayName}**, but only the thread creator can post here!`
+                `I am terribly sorry, **${message.author.displayName}**, but only the thread creator can post here!`,
+                    8000
             );
             return;
         }
@@ -1053,7 +1054,8 @@ client.on('messageCreate', async (message) => {
         if (userRecord.chapterLeases <= 0) {
             await message.delete();
             await sendTemporaryChannelMessage(message.channel, 
-                `📝 **${message.author.displayName}**, you have **0 chapter leases** remaining! Purchase more with \`/buy lease\` to continue posting.`
+                `📝 **${message.author.displayName}**, you have **0 chapter leases** remaining! Purchase more with \`/buy lease\` to continue posting.`,
+                    8000
             );
             return; // CRITICAL: Exit here to prevent any other checks
         }
