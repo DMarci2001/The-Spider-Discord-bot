@@ -6,7 +6,7 @@ const fs = require('fs').promises;
 // Change this value to adjust how long bot messages stay before deletion
 // Current: 5 minutes (300000 milliseconds)
 // Examples: 60000 = 1 minute, 180000 = 3 minutes, 600000 = 10 minutes
-const MESSAGE_DELETE_TIMEOUT = 300000; // 5 minutes
+const MESSAGE_DELETE_TIMEOUT = 5000; // 5 minutes
 
 // ===== BOT SETUP =====
 const client = new Client({
@@ -903,52 +903,44 @@ client.on('threadCreate', async (thread) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // BOOKSHELF LEASE ENFORCEMENT - SIMPLIFIED AND DIRECT
-    if (message.channel.isThread() && 
-        message.channel.parent && 
-        message.channel.parent.name === 'bookshelf' &&
-        message.channel.ownerId === message.author.id) {
+    // BOOKSHELF THREAD HANDLING - SINGLE CHECK ONLY
+    if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
         
-        const userRecord = getUserData(message.author.id);
-        
-        // IMMEDIATE LEASE CHECK - NO OTHER LOGIC
-        if (userRecord.chapterLeases <= 0) {
-            message.delete().catch(console.error);
-            message.channel.send(`📝 **${message.author.displayName}**, you have **0 chapter leases** remaining! Purchase more with \`/buy lease\` to continue posting.`)
-                .then(msg => setTimeout(() => msg.delete().catch(console.error), 15000))
-                .catch(console.error);
+        // Only thread owners can post
+        if (message.channel.ownerId !== message.author.id) {
+            await message.delete();
+            await sendTemporaryChannelMessage(message.channel, 
+                `❌ **${message.author.displayName}**, only the thread creator can post here!`
+            );
             return;
         }
         
-        // If they have leases, consume one
+        // Thread owner - check leases ONCE
+        const userRecord = getUserData(message.author.id);
+        
+        if (userRecord.chapterLeases <= 0) {
+            await message.delete();
+            await sendTemporaryChannelMessage(message.channel, 
+                `📝 **${message.author.displayName}**, you have **0 chapter leases** remaining! Purchase more with \`/buy lease\` to continue posting.`
+            );
+            return; // CRITICAL: Exit here to prevent any other checks
+        }
+        
+        // Has leases - consume one and continue
         userRecord.chapterLeases -= 1;
-        saveData();
+        await saveData();
         
-        // Show confirmation
-        message.channel.send(`📝 Chapter posted! **${userRecord.chapterLeases}** leases remaining.`)
-            .then(msg => setTimeout(() => msg.delete().catch(console.error), 8000))
-            .catch(console.error);
+        await sendTemporaryChannelMessage(message.channel, 
+            `📝 Chapter posted! **${userRecord.chapterLeases}** leases remaining.`, 
+            8000
+        );
         
-        return;
-    }
-
-    // Non-thread-owner posting in bookshelf threads
-    if (message.channel.isThread() && 
-        message.channel.parent && 
-        message.channel.parent.name === 'bookshelf' &&
-        message.channel.ownerId !== message.author.id) {
-        
-        message.delete().catch(console.error);
-        message.channel.send(`❌ **${message.author.displayName}**, only the thread creator can post here!`)
-            .then(msg => setTimeout(() => msg.delete().catch(console.error), 10000))
-            .catch(console.error);
-        return;
+        return; // CRITICAL: Exit here too
     }
 
     // Handle legacy commands
     if (message.content.startsWith('!')) {
         await handleCommand(message);
-        return;
     }
 });
 
@@ -1189,8 +1181,7 @@ function createBalanceEmbed(user, member) {
             { name: 'Current Credit Balance', value: `💰 ${userRecord.currentCredits}`, inline: true },
             { name: 'Chapter Leases', value: `📄 ${userRecord.chapterLeases}`, inline: true },
             { name: 'Monthly Quota', value: `${monthlyQuotaStatus}`, inline: true },
-            { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId, member), inline: true },
-            { name: 'Purchases Made', value: userRecord.purchases.length > 0 ? userRecord.purchases.map(item => `• ${STORE_ITEMS[item]?.name || item}`).join('\n') : 'None yet', inline: false }
+            { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId, member), inline: true }
         )
         .setColor(canPostInBookshelf(userId, member) ? 0x00AA55 : 0xFF9900);
 }
@@ -1288,11 +1279,9 @@ function createStoreEmbed(guild) {
     
     return new EmbedBuilder()
         .setTitle('Type&Draft Literary Emporium ☝️')
-        .setDescription('Welcome to our humble establishment, where dedication to the craft is rewarded with privileges. Examine our current offerings, crafted with the utmost care for our literary community.')
         .addFields(
             { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} credit\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
             { name: '📝 Chapter Lease', value: `Allows you to post one message in your bookshelf thread\n**Price:** ${STORE_ITEMS.lease.price} credit each\n**Note:** You can buy multiple leases at once by specifying quantity\n**Special Content:** Contact staff via ticket for free leases when posting maps, artwork, or other non-chapter content`, inline: false },
-            { name: 'How to Earn Credits', value: `• **Provide feedback** to fellow writers in the designated forums\n• **Log contributions** with \`/feedback\` to earn 1 credit each\n• **Build your reputation** through meaningful engagement`, inline: false },
             { name: 'How to Purchase', value: `• \`/buy shelf\` - Purchase bookshelf access\n• \`/buy lease\` - Purchase 1 chapter lease\n• \`/buy lease quantity:5\` - Purchase 5 chapter leases`, inline: false }
         )
         .setColor(0x2F3136)
