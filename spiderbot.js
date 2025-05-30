@@ -22,7 +22,7 @@ const client = new Client({
 const STORE_ITEMS = {
     shelf: {
         name: "Bookshelf Access",
-        description: "Grants you the Shelf Owner role (reader role required separately from staff)",
+        description: "Grants you the **Shelf Owner** role (reader role required separately from staff)",
         price: 1,
         role: "Shelf Owner",
         emoji: "📚",
@@ -1368,7 +1368,7 @@ function createStoreEmbed(guild) {
     return new EmbedBuilder()
         .setTitle('Type&Draft Literary Emporium ☝️')
         .addFields(
-            { name: '📚 Bookshelf Access', value: `Grants you the Shelf Owner role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} credit\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
+            { name: '📚 Bookshelf Access', value: `Grants you the **Shelf Owner** role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} credit\n**Note:** reader role must be assigned by staff separately based on feedback quality`, inline: false },
             { name: '📝 Chapter Lease', value: `Allows you to post one message in your bookshelf thread\n**Price:** ${STORE_ITEMS.lease.price} credit each\n**Note:** You can buy multiple leases at once by specifying quantity\n**Special Content:** Contact staff via ticket for free leases when posting maps, artwork, or other non-chapter content`, inline: false },
             { name: 'How to Purchase', value: `• \`/buy shelf\` - Purchase bookshelf access\n• \`/buy lease\` - Purchase 1 chapter lease\n• \`/buy lease quantity:5\` - Purchase 5 chapter leases`, inline: false }
         )
@@ -1565,16 +1565,16 @@ async function postServerGuide(channel) {
                 },
                 {
                     name: '✍️ Scriptorium',
-                    value: `${channels.writingChat} - General discourse on the craft\nIn the help channels, our community provides specialized guidance\n${channels.onePageCritique} - Submit short excerpts for detailed feedback\n${channels.snippetShowcase} - Display your finest work for admiration`,
+                    value: `${channels.writingChat} - General discourse on the craft\n• In the help channels, our community provides specialized guidance\n${channels.onePageCritique} - Submit short excerpts for detailed feedback\n${channels.snippetShowcase} - Display your finest work for admiration`,
                     inline: false
                 },
                 {
-                    name: '📚 The Sacred Library',
-                    value: `**Level 5 Required:** Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
+                    name: '📚 The Citadel',
+                    value: `**Level 5 Required:** Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
                     inline: false
                 },
                 {
-                    name: '💰 The Credit Economy',
+                    name: '💰 Our Credit Economy',
                     value: '• **Earn:** 1 credit per quality feedback (Level 5+ only)\n• **Purchase:** Bookshelf access (1 credit)\n• **Post:** Chapter leases (1 credit each) to publish your work',
                     inline: false
                 }
@@ -1621,7 +1621,7 @@ async function postRules(channel) {
             },
             {
                 name: '📜 The Fifth Law',
-                value: 'Direct messages require explicit permission. Promotional spam results in immediate banishment. **Introduction requirement: State your lucky number and favorite animal to prove rule comprehension.**',
+                value: 'Direct messages require explicit permission. Promotional spam results in immediate banishment. Introduction requirement: State your lucky number and favorite animal to prove rule comprehension.',
                 inline: false
             },
             {
@@ -1761,7 +1761,7 @@ function createFeedbackModificationEmbed(user, amount, action) {
     if (action === 'added') {
         return new EmbedBuilder()
             .addFields(
-                { name: 'Credit(s) Added ☝️', value: `+${amount} (to all counters)`, inline: false }
+                { name: 'Feedback(s) Added!', value: `+${amount}`, inline: false }
             )
             .setColor(0x00AA55);
     } else {
@@ -2601,7 +2601,7 @@ function createHelpEmbed(guild) {
         .addFields(
             { 
                 name: '📝 Earning Feedback Credits (Level 5 Required)', 
-                value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful feedback\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback contribution!`, 
+                value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful feedback\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback!`, 
                 inline: false 
             },
             { 
