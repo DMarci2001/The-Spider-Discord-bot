@@ -2061,9 +2061,8 @@ async function createPurgeListEmbed(guild) {
     let purgeCount = 0;
     let pardonedCount = 0;
     
-    // Process each Level 5 member
+    // Process each member
     allMembers.forEach((member, userId) => {
-        if (hasLevel5Role(member)) {
             const monthlyCount = getUserMonthlyFeedback(userId);
             const isPardoned = isUserPardoned(userId);
             const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
@@ -2077,7 +2076,7 @@ async function createPurgeListEmbed(guild) {
                 pardonedCount++;
                 pardonedList += `✅ **${member.displayName}** (${monthlyCount} credits)\n`;
             }
-        }
+        
     });
     
     // Truncate lists if too long
