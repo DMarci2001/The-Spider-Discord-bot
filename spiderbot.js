@@ -1300,7 +1300,7 @@ async function processPostChapterCommand(user, member, channel, isSlash, interac
             },
             {
                 name: 'Next Steps',
-                value: hasShelfOwnerRole ? 'Contact staff to request the reader role based on your feedback quality.' : 'Purchase Shelf Owner role from `/store` and contact staff for reader role.',
+                value: hasShelfOwnerRole ? 'Contact staff to request the reader role based on your feedback quality.' : 'Purchase a shelf from the store, and contact staff for reader role.',
                 inline: false
             })
             .setColor(0xFF9900);
@@ -1382,17 +1382,16 @@ function createBalanceEmbed(user, member) {
     const userId = user.id;
     const userRecord = getUserData(userId);
     const monthlyCount = getUserMonthlyFeedback(userId);
-    const monthlyQuotaStatus = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 'Monthly quota fulfilled' : 'Monthly quota unfulfilled';
+    const monthlyQuotaStatus = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 'Graciously fulfilled' : 'Unfulfilled';
     
     return new EmbedBuilder()
-        .setTitle(`${user.displayName}'s Literary Standing ☝️`)
+        .setTitle(`${user.displayName}'s Balance ☝️`)
         .addFields(
-            { name: 'Total Credits Earned', value: `📝 ${userRecord.totalFeedbackAllTime}`, inline: true },
+            { name: 'Total Credits', value: `📝 ${userRecord.totalFeedbackAllTime}`, inline: true },
             { name: 'Monthly Credits', value: `📅 ${monthlyCount}`, inline: true },
             { name: 'Current Credit Balance', value: `💰 ${userRecord.currentCredits}`, inline: true },
-            { name: 'Monthly Status', value: `${monthlyQuotaStatus}`, inline: true },
+            { name: 'Monthly Quota', value: `${monthlyQuotaStatus}`, inline: true },
             { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId, member), inline: true },
-            { name: 'Post Status', value: getPostCreditStatus(userId, member), inline: true },
             { name: 'Purchases Made', value: userRecord.purchases.length > 0 ? userRecord.purchases.map(item => `• ${STORE_ITEMS[item]?.name || item}`).join('\n') : 'None yet', inline: false }
         )
         .setColor(canPostInBookshelf(userId, member) ? 0x00AA55 : 0xFF9900);
@@ -2223,7 +2222,7 @@ function createHelpEmbed(guild) {
             },
             { 
                 name: '📚 Bookshelf Access', 
-                value: `\`/store\` - View all the items for sale in our store\n\`/buy shelf\` - Purchase Shelf Owner role (1 credit)\n**Important:** You need **both** Shelf Owner role (purchasable) **and** reader role (staff-assigned) to post in ${channels.bookshelf}`, 
+                value: `\`/store\` - View all the items for sale in our store\n\`/buy shelf\` - Purchase a shelf (1 credit)\n**Important:** You need **both** the Shelf Owner role (purchasable) **and** the reader role (staff-assigned) to post in ${channels.bookshelf}`, 
                 inline: false 
             },
             { 
