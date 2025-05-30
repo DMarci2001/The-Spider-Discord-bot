@@ -1793,7 +1793,7 @@ function createFeedbackModificationEmbed(user, amount, action) {
     } else {
         return new EmbedBuilder()
             .addFields(
-                { name: 'Credit(s) Removed ☝️', value: `-${amount} (from all counters)`, inline: false }
+                { name: 'Credit(s) Removed ☝️', value: `-${amount}`, inline: false }
             )
             .setColor(0xFF6B6B);
     }
