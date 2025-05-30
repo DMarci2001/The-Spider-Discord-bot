@@ -1538,22 +1538,14 @@ function createFeedbackModificationEmbed(user, amount, action) {
     
     if (action === 'added') {
         return new EmbedBuilder()
-            .setTitle('Feedback Credits Enhanced ☝️')
             .addFields(
-                { name: 'Monthly Count', value: `${monthlyCount}`, inline: true },
-                { name: 'All-Time Total', value: `${userRecord.totalFeedbackAllTime}`, inline: true },
-                { name: 'Current Credits', value: `${userRecord.currentCredits}`, inline: true },
-                { name: 'Credits Added', value: `+${amount} (to all counters)`, inline: false }
+                { name: 'Credit(s) Added ☝️', value: `+${amount} (to all counters)`, inline: false }
             )
             .setColor(0x00AA55);
     } else {
         return new EmbedBuilder()
-            .setTitle('Feedback Credits Reduced ☝️')
             .addFields(
-                { name: 'Monthly Count', value: `${monthlyCount}`, inline: true },
-                { name: 'All-Time Total', value: `${userRecord.totalFeedbackAllTime}`, inline: true },
-                { name: 'Current Credits', value: `${userRecord.currentCredits}`, inline: true },
-                { name: 'Credits Removed', value: `-${amount} (from all counters)`, inline: false }
+                { name: 'Credit(s) Removed ☝️', value: `-${amount} (from all counters)`, inline: false }
             )
             .setColor(0xFF6B6B);
     }
@@ -1668,10 +1660,7 @@ function createCreditBalanceModificationEmbed(user, amount, result, action) {
         .addFields(
             { name: 'Previous Balance', value: `💰 ${result.previousCredits} credit${result.previousCredits !== 1 ? 's' : ''}`, inline: true },
             { name: 'Current Balance', value: `💰 ${result.newCredits} credit${result.newCredits !== 1 ? 's' : ''}`, inline: true },
-            { name: `Credits ${action === 'removed' ? 'Removed' : 'Added'}`, value: `${action === 'removed' ? '-' : '+'}${amount}`, inline: true },
-            { name: 'Monthly Feedback', value: `📅 ${result.monthlyCount} (unchanged)`, inline: true },
-            { name: 'All-Time Total', value: `📝 ${result.allTimeTotal} (unchanged)`, inline: true },
-            { name: 'Note', value: '⚠️ Only current credit balance was modified', inline: true }
+            { name: `Credits ${action === 'removed' ? 'Removed' : 'Added'}`, value: `${action === 'removed' ? '-' : '+'}${amount}`, inline: true }
         )
         .setColor(action === 'removed' ? 0xFF6B6B : 0x00AA55);
 }
@@ -1980,9 +1969,8 @@ async function performManualPurge(guild) {
     let failedKicks = [];
     let protectedMembers = [];
     
-    // Find all Level 5 members who should be purged
+    // Find all members who should be purged
     for (const [userId, member] of allMembers) {
-        if (!hasLevel5Role(member)) continue;
         
         const monthlyCount = getUserMonthlyFeedback(userId);
         const isPardoned = isUserPardoned(userId);
@@ -2294,7 +2282,6 @@ async function createPurgeListEmbed(guild) {
     
     // Process each member
     allMembers.forEach((member, userId) => {
-        if (!hasLevel5Role(member)) return;
         
         const monthlyCount = getUserMonthlyFeedback(userId);
         const isPardoned = isUserPardoned(userId);
@@ -2318,7 +2305,7 @@ async function createPurgeListEmbed(guild) {
     
     // Truncate lists if too long
     if (purgeList.length > 700) {
-        purgeList = purgeList.substring(0, 650) + '...\n*(List truncated)*';
+        purgeList = purgeList.substring(0, 650);
     }
     if (pardonedList.length > 200) {
         pardonedList = pardonedList.substring(0, 150) + '...\n*(List truncated)*';
@@ -2335,9 +2322,9 @@ async function createPurgeListEmbed(guild) {
         .setTitle('Monthly Purge List ☝️')
         .setDescription('Do not be alarmed, my liege. This list merely reflects the current status quo, but it is subject to change, depending on the actions of our noble writers.')
         .addFields(
-            { name: `🔥 Would Be Purged (${purgeCount})`, value: purgeList, inline: false },
+            { name: `🔥 To be Purged (${purgeCount})`, value: purgeList, inline: false },
             { name: `🛡️ Pardoned from Purge (${pardonedCount})`, value: pardonedList, inline: false },
-            { name: 'Requirements', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}\n• **Protected:** Staff with admin/moderator permissions`, inline: false }
+            { name: 'Notes', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: false }
         )
         .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
     
