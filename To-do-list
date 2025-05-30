@@ -73,6 +73,7 @@ feedback_remove is called, the balance command still shows the same amount as be
 Version 12:
 
 1. Update the staff command bot embedded message texts.
+2. Remove the /feedback_status becuase it is redundant.
 
 In the code:
 
