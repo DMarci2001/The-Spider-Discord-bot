@@ -1185,10 +1185,10 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     // Check if user has Level 5 role
     if (!hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
-            .setTitle(`${roles.level5} Required ☝️`)
+            .setTitle(`**Level 5** Required ☝️`)
             .addFields({
                 name: 'How to Gain Access',
-                value: `Continue participating in the server activities and earning experience to reach ${roles.level5} status.`,
+                value: `Continue participating in the server activities and earning experience to reach **Level 5** status.`,
                 inline: false
             })
             .setColor(0xFF9900);
@@ -1595,12 +1595,12 @@ async function postServerGuide(channel) {
                 },
                 {
                     name: '📚 The Citadel',
-                    value: `**${roles.level5} Required:** Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
+                    value: `****Level 5** Required:** Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
                     inline: false
                 },
                 {
                     name: '💰 Our Credit Economy',
-                    value: `• **Earn:** 1 credit per quality feedback (${roles.level5}+ only)\n• **Purchase:** Bookshelf access (1 credit)\n• **Post:** Chapter leases (1 credit each) to publish your work`,
+                    value: `• **Earn:** 1 credit per quality feedback (**Level 5**+ only)\n• **Purchase:** Bookshelf access (1 credit)\n• **Post:** Chapter leases (1 credit each) to publish your work`,
                     inline: false
                 }
             )
@@ -1637,7 +1637,7 @@ async function postRules(channel) {
             },
             {
                 name: '📜 The Third Law',
-                value: `Upon earning access to our ${channels.bookshelf} forum, you may post chapters using chapter leases. The preferred format of feedback in our server is Google Docs, albeit you can deter from it, as long as your contribution is sufficient. **Provide at least one quality feedback or face purging.** Poorly executed feedback shall not count toward your quota. New members must reach ${roles.level5} in a month; failure to comply will result in removal from the server. This is a necessary measure to maintain our community\'s integrity, and ensure all members contribute meaningfully.`,
+                value: `Upon earning access to our ${channels.bookshelf} forum, you may post chapters using chapter leases. The preferred format of feedback in our server is Google Docs, albeit you can deter from it, as long as your contribution is sufficient. **Provide at least one quality feedback or face purging.** Poorly executed feedback shall not count toward your quota. New members must reach **Level 5** in a month; failure to comply will result in removal from the server. This is a necessary measure to maintain our community\'s integrity, and ensure all members contribute meaningfully.`,
                 inline: false
             },
             {
@@ -2100,7 +2100,7 @@ async function handlePardonSlashCommand(interaction) {
     if (!member || !hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
             .setTitle('Invalid Target')
-            .setDescription(`I regret that the mentioned user does not possess the ${roles.level5} role and thus requires no pardon.`)
+            .setDescription(`I regret that the mentioned user does not possess the **Level 5** role and thus requires no pardon.`)
             .setColor(0xFF9900);
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
@@ -2132,7 +2132,7 @@ async function handleUnpardonSlashCommand(interaction) {
     if (!member || !hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
             .setTitle('Invalid Target')
-            .setDescription(`I regret that the mentioned user does not possess the ${roles.level5} role and thus has no pardon to revoke.`)
+            .setDescription(`I regret that the mentioned user does not possess the **Level 5** role and thus has no pardon to revoke.`)
             .setColor(0xFF9900);
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
@@ -2408,7 +2408,7 @@ async function createStatsEmbed(guild) {
     if (pardonedList) level5Details += pardonedList;
     if (nonFulfillmentList) level5Details += nonFulfillmentList;
     
-    if (!level5Details) level5Details = `• No ${roles.level5} members found`;
+    if (!level5Details) level5Details = `• No **Level 5** members found`;
     if (level5Details.length > 1024) {
         level5Details = level5Details.substring(0, 1000) + '...\n*(List truncated)*';
     }
@@ -2423,11 +2423,11 @@ async function createStatsEmbed(guild) {
             { name: 'Monthly Participation Rate', value: `${contributionRate}%`, inline: true },
             { name: 'Community Health', value: contributionRate >= 70 ? '✅ Flourishing' : contributionRate >= 50 ? '⚠️ Moderate' : '🔴 Requires attention', inline: true },
             { name: 'Pardoned This Month', value: `${pardonedCount} members`, inline: true },
-            { name: 'Overview', value: `• **${totalLevel5}** total ${roles.level5} members\n• **${monthlyContributors}** meeting requirements\n• **${pardonedCount}** pardoned this month`, inline: false },
+            { name: 'Overview', value: `• **${totalLevel5}** total **Level 5** members\n• **${monthlyContributors}** meeting requirements\n• **${pardonedCount}** pardoned this month`, inline: false },
             { name: 'Detailed Status', value: level5Details, inline: false }
         )
         .setColor(contributionRate >= 70 ? 0x00AA55 : contributionRate >= 50 ? 0xFF9900 : 0xFF4444)
-        .setFooter({ text: `Monthly purge kicks inactive ${roles.level5} members since July 2025 • ✅ = Meeting requirement • ❌ = Below requirement` });
+        .setFooter({ text: `Monthly purge kicks inactive **Level 5** members since July 2025 • ✅ = Meeting requirement • ❌ = Below requirement` });
     
     return embed;
 }
@@ -2583,7 +2583,7 @@ async function createPurgeListEmbed(guild) {
         .addFields(
             { name: `🔥 To be Purged (${purgeCount})`, value: purgeList, inline: false },
             { name: `🛡️ Pardoned from Purge (${pardonedCount})`, value: pardonedList, inline: false },
-            { name: 'Notes', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}\n• **Only ${roles.level5} members** are subject to purging`, inline: false }
+            { name: 'Notes', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}\n• **Only **Level 5** members** are subject to purging`, inline: false }
         )
         .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
     
@@ -2638,7 +2638,7 @@ function createHelpEmbed(guild) {
         .setTitle('Essential Commands at Your Service ☝️')
         .addFields(
             { 
-                name: `📝 Earning Feedback Credits (${roles.level5} Required)`, 
+                name: `📝 Earning Feedback Credits (**Level 5** Required)`, 
                 value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful feedback\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback!`, 
                 inline: false 
             },
