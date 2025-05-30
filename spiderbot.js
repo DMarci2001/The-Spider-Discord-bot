@@ -543,6 +543,18 @@ function pardonUser(userId) {
     }
 }
 
+function removePardon(userId) {
+    const monthKey = getCurrentMonthKey();
+    if (pardonedUsers[monthKey] && pardonedUsers[monthKey].includes(userId)) {
+        pardonedUsers[monthKey] = pardonedUsers[monthKey].filter(id => id !== userId);
+        if (pardonedUsers[monthKey].length === 0) {
+            delete pardonedUsers[monthKey];
+        }
+        return true;
+    }
+    return false;
+}
+
 // ===== USER RESET FUNCTION =====
 async function resetUserProgress(userId, guild) {
     console.log(`Resetting all progress for user ${userId}`);
@@ -606,6 +618,25 @@ async function replyTemporaryMessage(message, messageOptions, delay = MESSAGE_DE
         return reply;
     } catch (error) {
         console.error('Failed to send temporary message reply:', error);
+        return null;
+    }
+}
+
+async function sendTemporaryChannelMessage(channel, content, delay = MESSAGE_DELETE_TIMEOUT) {
+    try {
+        const message = await channel.send(content);
+        console.log(`Sent temporary channel message, will delete in ${delay}ms`);
+        setTimeout(async () => {
+            try { 
+                await message.delete(); 
+                console.log('Successfully deleted temporary channel message');
+            } catch (error) { 
+                console.log('Failed to delete channel message:', error.message); 
+            }
+        }, delay);
+        return message;
+    } catch (error) {
+        console.error('Failed to send temporary channel message:', error);
         return null;
     }
 }
@@ -728,11 +759,6 @@ const commands = [
         .setDescription('Log your most recent contribution in this thread'),
     
     new SlashCommandBuilder()
-        .setName('feedback_status')
-        .setDescription('Check monthly feedback status')
-        .addUserOption(option => option.setName('user').setDescription('User to check (optional)').setRequired(false)),
-    
-    new SlashCommandBuilder()
         .setName('balance')
         .setDescription('Check your feedback credits and bookshelf eligibility')
         .addUserOption(option => option.setName('user').setDescription('User to check (optional)').setRequired(false)),
@@ -808,6 +834,11 @@ const commands = [
         .addUserOption(option => option.setName('user').setDescription('Level 5 member to pardon from this month\'s requirement').setRequired(true)),
     
     new SlashCommandBuilder()
+        .setName('unpardon')
+        .setDescription('Remove pardon from a Level 5 member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('Level 5 member to remove pardon from').setRequired(true)),
+    
+    new SlashCommandBuilder()
         .setName('setup_bookshelf')
         .setDescription('Grant bookshelf access to a member (Staff only)')
         .addUserOption(option => option.setName('user').setDescription('Member to grant bookshelf access to').setRequired(true)),
@@ -815,6 +846,10 @@ const commands = [
     new SlashCommandBuilder()
         .setName('purge_list')
         .setDescription('View all Level 5 members who would be purged for not meeting monthly requirements (Staff only)'),
+    
+    new SlashCommandBuilder()
+        .setName('manual_purge')
+        .setDescription('Manually purge all Level 5 members who don\'t meet monthly requirements (Staff only)'),
 ];
 
 async function registerCommands() {
@@ -965,7 +1000,6 @@ async function handleCommand(message) {
         
         const commandHandlers = {
             feedback: () => handleFeedbackCommand(message),
-            feedback_status: () => handleFeedbackStatusCommand(message),
             feedback_add: () => handleFeedbackAddCommand(message, args),
             feedback_remove: () => handleFeedbackRemoveCommand(message, args),
             feedback_reset: () => handleFeedbackResetCommand(message),
@@ -997,7 +1031,6 @@ async function handleCommand(message) {
 async function handleSlashCommand(interaction) {
     const commandHandlers = {
         feedback: () => handleFeedbackSlashCommand(interaction),
-        feedback_status: () => handleFeedbackStatusSlashCommand(interaction),
         feedback_add: () => handleFeedbackAddSlashCommand(interaction),
         feedback_remove: () => handleFeedbackRemoveSlashCommand(interaction),
         feedback_reset: () => handleFeedbackResetSlashCommand(interaction),
@@ -1013,7 +1046,9 @@ async function handleSlashCommand(interaction) {
         buy: () => handleBuySlashCommand(interaction),
         setup_bookshelf: () => handleSetupBookshelfSlashCommand(interaction),
         pardon: () => handlePardonSlashCommand(interaction),
+        unpardon: () => handleUnpardonSlashCommand(interaction),
         purge_list: () => handlePurgeListSlashCommand(interaction),
+        manual_purge: () => handleManualPurgeSlashCommand(interaction),
     };
     
     const handler = commandHandlers[interaction.commandName];
@@ -1184,34 +1219,6 @@ function createBalanceEmbed(user, member) {
             { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId, member), inline: true }
         )
         .setColor(canPostInBookshelf(userId, member) ? 0x00AA55 : 0xFF9900);
-}
-
-// ===== FEEDBACK STATUS COMMANDS =====
-async function handleFeedbackStatusCommand(message) {
-    const user = message.mentions.users.first() || message.author;
-    const embed = createFeedbackStatusEmbed(user, message.author);
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleFeedbackStatusSlashCommand(interaction) {
-    const user = interaction.options.getUser('user') || interaction.user;
-    const embed = createFeedbackStatusEmbed(user, interaction.user);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-function createFeedbackStatusEmbed(user, requester) {
-    const userId = user.id;
-    const monthlyCount = getUserMonthlyFeedback(userId);
-    const totalAllTime = getUserData(userId).totalFeedbackAllTime;
-    
-    return new EmbedBuilder()
-        .setTitle(`Literary Standing - ${user.displayName}`)
-        .addFields(
-            { name: 'This Month', value: `${monthlyCount} credit${monthlyCount !== 1 ? 's' : ''}`, inline: true },
-            { name: 'All Time', value: `${totalAllTime} credit${monthlyCount !== 1 ? 's' : ''}`, inline: true },
-            { name: 'Requirement Status', value: monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅ Graciously fulfilled' : '📝 Monthly credits still awaited', inline: true }
-        )
-        .setColor(monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 0x00AA55 : 0xFF9900);
 }
 
 // ===== HALL OF FAME COMMANDS =====
@@ -1834,6 +1841,10 @@ async function handlePardonCommand(message, args) {
         return replyTemporaryMessage(message, 'I regret that the mentioned user does not possess the Level 5 role and thus requires no pardon.');
     }
     
+    if (isUserPardoned(user.id)) {
+        return replyTemporaryMessage(message, 'I regret to inform you that this distinguished member has already been granted clemency for this month\'s requirements.');
+    }
+    
     pardonUser(user.id);
     await saveData();
     
@@ -1857,11 +1868,68 @@ async function handlePardonSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
+    if (isUserPardoned(user.id)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Already Pardoned ☝️')
+            .setDescription('I regret to inform you that this distinguished member has already been granted clemency for this month\'s requirements.')
+            .setColor(0xFF9900);
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
     pardonUser(user.id);
     await saveData();
     
     const embed = createPardonEmbed(user, 'granted');
     await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleUnpardonSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    const member = interaction.guild.members.cache.get(user.id);
+    
+    if (!member || !hasLevel5Role(member)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Invalid Target')
+            .setDescription('I regret that the mentioned user does not possess the Level 5 role and thus has no pardon to revoke.')
+            .setColor(0xFF9900);
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    if (!isUserPardoned(user.id)) {
+        const embed = new EmbedBuilder()
+            .setTitle('No Pardon Found ☝️')
+            .setDescription('I regret to inform you that this member currently holds no pardon for this month\'s requirements.')
+            .setColor(0xFF9900);
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    const removed = removePardon(user.id);
+    if (removed) {
+        await saveData();
+        
+        const embed = new EmbedBuilder()
+            .setTitle('Pardon Revoked ☝️')
+            .setDescription(`The clemency previously granted to **${user.displayName}** has been rescinded. They must now meet the monthly feedback requirement or face purging.`)
+            .addFields(
+                { name: 'Member', value: `${user.displayName}`, inline: true },
+                { name: 'Current Status', value: 'Must meet monthly requirement', inline: true },
+                { name: 'Monthly Requirement', value: `${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: true }
+            )
+            .setColor(0xFF6B6B);
+        
+        await replyTemporary(interaction, { embeds: [embed] });
+    } else {
+        const embed = new EmbedBuilder()
+            .setTitle('Revocation Failed')
+            .setDescription('An unexpected complication arose while attempting to revoke the pardon.')
+            .setColor(0xFF6B6B);
+        
+        await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
 }
 
 function createPardonEmbed(user, action) {
@@ -1871,6 +1939,170 @@ function createPardonEmbed(user, action) {
             { name: 'Pardoned User', value: `${user.displayName}`, inline: true }
         )
         .setColor(0x00AA55);
+}
+
+// ===== MANUAL PURGE COMMANDS =====
+async function handleManualPurgeSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    // Defer the reply since this operation might take time
+    await interaction.deferReply();
+    
+    const result = await performManualPurge(interaction.guild);
+    const embed = createManualPurgeResultEmbed(result);
+    
+    await interaction.editReply({ embeds: [embed] });
+}
+
+// Helper function to check if member should be protected from purge
+function isProtectedFromPurge(member) {
+    // Protect members with staff permissions
+    if (member.permissions.has(PermissionFlagsBits.ManageMessages) ||
+        member.permissions.has(PermissionFlagsBits.ManageRoles) ||
+        member.permissions.has(PermissionFlagsBits.ManageGuild) ||
+        member.permissions.has(PermissionFlagsBits.Administrator)) {
+        return true;
+    }
+    
+    // Protect members with specific staff roles (customize these role names as needed)
+    const protectedRoles = ['Admin', 'Moderator', 'Staff', 'Owner', 'Bot Manager'];
+    const hasProtectedRole = member.roles.cache.some(role => 
+        protectedRoles.some(protectedRole => 
+            role.name.toLowerCase().includes(protectedRole.toLowerCase())
+        )
+    );
+    
+    return hasProtectedRole;
+}
+
+async function performManualPurge(guild) {
+    const allMembers = await guild.members.fetch();
+    let purgedMembers = [];
+    let failedKicks = [];
+    let protectedMembers = [];
+    
+    // Find all Level 5 members who should be purged
+    for (const [userId, member] of allMembers) {
+        if (!hasLevel5Role(member)) continue;
+        
+        const monthlyCount = getUserMonthlyFeedback(userId);
+        const isPardoned = isUserPardoned(userId);
+        const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
+        
+        if (!meetingRequirement && !isPardoned) {
+            // Check if member is protected from purge
+            if (isProtectedFromPurge(member)) {
+                protectedMembers.push({
+                    displayName: member.displayName,
+                    id: userId,
+                    monthlyCount: monthlyCount,
+                    reason: 'Staff/Admin permissions'
+                });
+                console.log(`Protected from purge: ${member.displayName} (${monthlyCount} credits) - Staff/Admin`);
+                continue;
+            }
+            
+            // This member should be purged
+            try {
+                await member.kick(`Monthly purge - Failed to meet feedback requirement (${monthlyCount}/${MONTHLY_FEEDBACK_REQUIREMENT} credits)`);
+                purgedMembers.push({
+                    displayName: member.displayName,
+                    id: userId,
+                    monthlyCount: monthlyCount
+                });
+                console.log(`Purged member: ${member.displayName} (${monthlyCount} credits)`);
+                
+                // Clean up their data after successful kick
+                await resetUserProgress(userId, guild);
+                
+                // Small delay to avoid rate limits
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (error) {
+                failedKicks.push({
+                    displayName: member.displayName,
+                    id: userId,
+                    error: error.message
+                });
+                console.error(`Failed to kick ${member.displayName}:`, error);
+            }
+        }
+    }
+    
+    return {
+        purgedMembers,
+        failedKicks,
+        protectedMembers,
+        totalPurged: purgedMembers.length,
+        totalFailed: failedKicks.length,
+        totalProtected: protectedMembers.length
+    };
+}
+
+function createManualPurgeResultEmbed(result) {
+    const { purgedMembers, failedKicks, protectedMembers, totalPurged, totalFailed, totalProtected } = result;
+    
+    let purgedList = '';
+    if (purgedMembers.length > 0) {
+        purgedList = purgedMembers.slice(0, 10).map(member => 
+            `• **${member.displayName}** (${member.monthlyCount} credits)`
+        ).join('\n');
+        
+        if (purgedMembers.length > 10) {
+            purgedList += `\n• *...and ${purgedMembers.length - 10} more*`;
+        }
+    } else {
+        purgedList = '• No members were purged';
+    }
+    
+    let protectedList = '';
+    if (protectedMembers.length > 0) {
+        protectedList = protectedMembers.slice(0, 5).map(member => 
+            `• **${member.displayName}** (${member.monthlyCount} credits) - ${member.reason}`
+        ).join('\n');
+        
+        if (protectedMembers.length > 5) {
+            protectedList += `\n• *...and ${protectedMembers.length - 5} more*`;
+        }
+    } else {
+        protectedList = '• No protected members found';
+    }
+    
+    let failedList = '';
+    if (failedKicks.length > 0) {
+        failedList = failedKicks.slice(0, 5).map(member => 
+            `• **${member.displayName}** - ${member.error}`
+        ).join('\n');
+        
+        if (failedKicks.length > 5) {
+            failedList += `\n• *...and ${failedKicks.length - 5} more failures*`;
+        }
+    } else {
+        failedList = '• No failures occurred';
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Manual Purge Completed ☝️')
+        .setDescription('The monthly purge has been executed with the precision befitting our literary standards.')
+        .addFields(
+            { name: `Successfully Purged (${totalPurged})`, value: purgedList, inline: false },
+            { name: `Protected from Purge (${totalProtected})`, value: protectedList, inline: false }
+        )
+        .setColor(totalFailed === 0 ? 0x00AA55 : 0xFF9900)
+        .setTimestamp();
+    
+    if (totalFailed > 0) {
+        embed.addFields(
+            { name: `Failed to Purge (${totalFailed})`, value: failedList, inline: false }
+        );
+    }
+    
+    embed.setFooter({ 
+        text: `Purge complete • ${totalPurged} removed • ${totalProtected} protected • ${totalFailed} failed • Requirement: ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}/month` 
+    });
+    
+    return embed;
 }
 
 // ===== STATS COMMANDS =====
@@ -2058,37 +2290,49 @@ async function createPurgeListEmbed(guild) {
     
     let purgeList = '';
     let pardonedList = '';
+    let protectedList = '';
     let purgeCount = 0;
     let pardonedCount = 0;
+    let protectedCount = 0;
     
     // Process each member
     allMembers.forEach((member, userId) => {
-            const monthlyCount = getUserMonthlyFeedback(userId);
-            const isPardoned = isUserPardoned(userId);
-            const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
-            
-            if (!meetingRequirement && !isPardoned) {
-                // Would be purged
-                purgeCount++;
-                purgeList += `❌ **${member.displayName}** (${monthlyCount} credits)\n`;
-            } else if (!meetingRequirement && isPardoned) {
-                // Pardoned from purge
-                pardonedCount++;
-                pardonedList += `✅ **${member.displayName}** (${monthlyCount} credits)\n`;
-            }
+        if (!hasLevel5Role(member)) return;
         
+        const monthlyCount = getUserMonthlyFeedback(userId);
+        const isPardoned = isUserPardoned(userId);
+        const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
+        const isProtected = isProtectedFromPurge(member);
+        
+        if (!meetingRequirement && !isPardoned && !isProtected) {
+            // Would be purged
+            purgeCount++;
+            purgeList += `❌ **${member.displayName}** (${monthlyCount} credits)\n`;
+        } else if (!meetingRequirement && isPardoned) {
+            // Pardoned from purge
+            pardonedCount++;
+            pardonedList += `✅ **${member.displayName}** (${monthlyCount} credits)\n`;
+        } else if (!meetingRequirement && isProtected) {
+            // Protected from purge
+            protectedCount++;
+            protectedList += `🛡️ **${member.displayName}** (${monthlyCount} credits) - Staff\n`;
+        }
     });
     
     // Truncate lists if too long
-    if (purgeList.length > 800) {
-        purgeList = purgeList.substring(0, 750);
+    if (purgeList.length > 700) {
+        purgeList = purgeList.substring(0, 650) + '...\n*(List truncated)*';
     }
     if (pardonedList.length > 200) {
-        pardonedList = pardonedList.substring(0, 150);
+        pardonedList = pardonedList.substring(0, 150) + '...\n*(List truncated)*';
+    }
+    if (protectedList.length > 200) {
+        protectedList = protectedList.substring(0, 150) + '...\n*(List truncated)*';
     }
     
     if (!purgeList) purgeList = '• No members would be purged this month';
     if (!pardonedList) pardonedList = '• No pardoned members this month';
+    if (!protectedList) protectedList = '• No protected staff members found';
     
     const embed = new EmbedBuilder()
         .setTitle('Monthly Purge List ☝️')
@@ -2096,7 +2340,7 @@ async function createPurgeListEmbed(guild) {
         .addFields(
             { name: `🔥 Would Be Purged (${purgeCount})`, value: purgeList, inline: false },
             { name: `🛡️ Pardoned from Purge (${pardonedCount})`, value: pardonedList, inline: false },
-            { name: 'Requirements', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: false }
+            { name: 'Requirements', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}\n• **Protected:** Staff with admin/moderator permissions`, inline: false }
         )
         .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
     
@@ -2125,7 +2369,7 @@ function createAllCommandsEmbed() {
             },
             { 
                 name: '👑 Server Administration', 
-                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Grant bookshelf access to a member\n`/pardon` - Pardon a Level 5 member from monthly feedback requirement\n`/purge_list` - View all Level 5 members who would be purged for not meeting monthly requirements', 
+                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Grant bookshelf access to a member\n`/pardon` - Pardon a Level 5 member from monthly feedback requirement\n`/unpardon` - Remove pardon from a Level 5 member\n`/purge_list` - View all Level 5 members who would be purged\n`/manual_purge` - Execute manual purge of all qualifying members', 
                 inline: false 
             }
         )
@@ -2156,7 +2400,7 @@ function createHelpEmbed(guild) {
             },
             { 
                 name: '💰 Credit System', 
-                value: '`/balance` - Check your credits and lease availability\n`/feedback_status` - View monthly progress\n`/hall_of_fame` - See top contributors leaderboard', 
+                value: '`/balance` - Check your credits and lease availability\n`/hall_of_fame` - See top contributors leaderboard', 
                 inline: false 
             },
             { 
