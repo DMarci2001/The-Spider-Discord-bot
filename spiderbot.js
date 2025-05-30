@@ -2081,10 +2081,10 @@ async function createPurgeListEmbed(guild) {
     
     // Truncate lists if too long
     if (purgeList.length > 800) {
-        purgeList = purgeList.substring(0, 750) + '...\n*(List truncated)*';
+        purgeList = purgeList.substring(0, 750);
     }
     if (pardonedList.length > 200) {
-        pardonedList = pardonedList.substring(0, 150) + '...\n*(List truncated)*';
+        pardonedList = pardonedList.substring(0, 150);
     }
     
     if (!purgeList) purgeList = '• No members would be purged this month';
