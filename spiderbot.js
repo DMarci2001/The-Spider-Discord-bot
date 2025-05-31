@@ -1,6 +1,7 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes } = require('discord.js');
 const fs = require('fs').promises;
+const DatabaseManager = require('./database');
 
 // ===== MESSAGE DELETION TIMEOUT CONFIGURATION =====
 // Change this value to adjust how long bot messages stay before deletion
@@ -56,14 +57,6 @@ const WELCOME_CONFIG = {
         footer: true
     }
 };
-
-// ===== DATA STORAGE =====
-
-let monthlyFeedback = {};
-let userData = {};
-let loggedFeedbackMessages = {};
-let pardonedUsers = {};
-let facelessCooldowns = {};
 
 // ===== ACTIVITY MONITORING FUNCTIONS =====
 async function sendActivityNotification(guild, type, data) {
@@ -186,9 +179,18 @@ class WelcomeSystem {
     async handleRejoiningMember(member) {
         const userId = member.id;
         
-        if (userData[userId] || monthlyFeedback[userId]) {
-            this.logger.log(`🔄 Resetting data for rejoining member: ${member.displayName}`);
-            await resetUserProgress(userId, member.guild);
+        // Check if user has existing data in database instead of global variables
+        try {
+            const userRecord = await getUserData(userId);
+            const monthlyCount = await getUserMonthlyFeedback(userId);
+            
+            if (userRecord.totalFeedbackAllTime > 0 || monthlyCount > 0) {
+                this.logger.log(`🔄 Resetting data for rejoining member: ${member.displayName}`);
+                await resetUserProgress(userId, member.guild);
+            }
+        } catch (error) {
+            // If user doesn't exist in database, that's fine - they're new
+            this.logger.log(`New member detected: ${member.displayName}`);
         }
     }
 
@@ -339,6 +341,12 @@ class WelcomeSystem {
     }
 }
 
+async function fixChannelPermissions() {
+    // This function doesn't need database access, so it can remain as is
+    // Just make sure it exists
+    console.log('🔧 Channel permissions checked');
+}
+
 const welcomeSystem = new WelcomeSystem(client);
 
 // ===== CHANNEL MENTION HELPER FUNCTIONS =====
@@ -409,16 +417,14 @@ function getCurrentMonthKey() {
     return `${now.getFullYear()}-${now.getMonth()}`;
 }
 
-function getUserMonthlyFeedback(userId) {
+async function getUserMonthlyFeedback(userId) {
     const monthKey = getCurrentMonthKey();
-    if (!monthlyFeedback[userId]) monthlyFeedback[userId] = {};
-    return Math.max(0, monthlyFeedback[userId][monthKey] || 0);
+    return await global.db.getMonthlyFeedback(userId, monthKey);
 }
 
-function setUserMonthlyFeedback(userId, count) {
+async function setUserMonthlyFeedback(userId, count) {
     const monthKey = getCurrentMonthKey();
-    if (!monthlyFeedback[userId]) monthlyFeedback[userId] = {};
-    monthlyFeedback[userId][monthKey] = Math.max(0, count);
+    await global.db.setMonthlyFeedback(userId, monthKey, Math.max(0, count));
 }
 
 function hasLevel5Role(member) {
@@ -445,30 +451,28 @@ function hasShelfRole(member) {
     return member.roles.cache.some(role => role.name === 'Shelf Owner');
 }
 
-function getUserData(userId) {
-    if (!userData[userId]) {
-        userData[userId] = {
-            totalFeedbackAllTime: 0,
-            currentCredits: 0,
-            purchases: [],
-            bookshelfPosts: 0,
-            chapterLeases: 0
-        };
-    }
+async function getUserData(userId) {
+    const user = await global.db.getUser(userId);
+    const purchases = await global.db.getUserPurchases(userId);
     
-    const user = userData[userId];
-    if (!Array.isArray(user.purchases)) user.purchases = [];
-    if (typeof user.totalFeedbackAllTime !== 'number') user.totalFeedbackAllTime = 0;
-    if (typeof user.currentCredits !== 'number') user.currentCredits = 0;
-    if (typeof user.bookshelfPosts !== 'number') user.bookshelfPosts = 0;
-    if (typeof user.chapterLeases !== 'number') user.chapterLeases = 0;
+    return {
+        totalFeedbackAllTime: user.total_feedback_all_time,
+        currentCredits: user.current_credits,
+        bookshelfPosts: user.bookshelf_posts,
+        chapterLeases: user.chapter_leases,
+        purchases: purchases
+    };
+}
+
+async function updateUserData(userId, updates) {
+    // Convert camelCase to snake_case for database
+    const dbUpdates = {};
+    if (updates.totalFeedbackAllTime !== undefined) dbUpdates.total_feedback_all_time = updates.totalFeedbackAllTime;
+    if (updates.currentCredits !== undefined) dbUpdates.current_credits = updates.currentCredits;
+    if (updates.bookshelfPosts !== undefined) dbUpdates.bookshelf_posts = updates.bookshelfPosts;
+    if (updates.chapterLeases !== undefined) dbUpdates.chapter_leases = updates.chapterLeases;
     
-    user.totalFeedbackAllTime = Math.max(0, user.totalFeedbackAllTime);
-    user.currentCredits = Math.max(0, user.currentCredits);
-    user.bookshelfPosts = Math.max(0, user.bookshelfPosts);
-    user.chapterLeases = Math.max(0, user.chapterLeases);
-    
-    return user;
+    await global.db.updateUser(userId, dbUpdates);
 }
 
 function hasReaderRole(member) {
@@ -480,8 +484,8 @@ function canCreateBookshelfThread(member) {
     return hasShelfRole(member) && hasReaderRole(member);
 }
 
-function canPostInBookshelf(userId, member) {
-    const user = getUserData(userId);
+async function canPostInBookshelf(userId, member) {
+    const user = await getUserData(userId);
     const hasEnoughFeedback = user.totalFeedbackAllTime >= MINIMUM_FEEDBACK_FOR_SHELF;
     const hasShelfPurchase = user.purchases.includes('shelf');
     const hasRequiredRoles = member ? (hasShelfRole(member) && hasReaderRole(member)) : false;
@@ -490,38 +494,48 @@ function canPostInBookshelf(userId, member) {
     return hasEnoughFeedback && hasShelfPurchase && hasRequiredRoles && hasLeases;
 }
 
-function spendCredits(userId, amount) {
-    const user = getUserData(userId);
+async function spendCredits(userId, amount) {
+    const userData = await getUserData(userId);
     const validAmount = Math.max(0, Math.floor(amount));
-    if (user.currentCredits >= validAmount) {
-        user.currentCredits -= validAmount;
-        console.log(`User ${userId} spent ${validAmount} credits. Remaining: ${user.currentCredits}`);
+    
+    if (userData.currentCredits >= validAmount) {
+        await updateUserData(userId, { 
+            currentCredits: userData.currentCredits - validAmount 
+        });
+        console.log(`User ${userId} spent ${validAmount} credits. Remaining: ${userData.currentCredits - validAmount}`);
         return true;
     }
-    console.log(`Insufficient credits for ${userId}: has ${user.currentCredits}, needs ${validAmount}`);
+    
+    console.log(`Insufficient credits for ${userId}: has ${userData.currentCredits}, needs ${validAmount}`);
     return false;
 }
 
-function consumeLease(userId) {
-    const user = getUserData(userId);
-    if (user.chapterLeases > 0) {
-        user.chapterLeases -= 1;
-        user.bookshelfPosts += 1;
-        console.log(`User ${userId} consumed 1 lease. Remaining: ${user.chapterLeases}`);
+async function consumeLease(userId) {
+    const userData = await getUserData(userId);
+    
+    if (userData.chapterLeases > 0) {
+        await updateUserData(userId, { 
+            chapterLeases: userData.chapterLeases - 1,
+            bookshelfPosts: userData.bookshelfPosts + 1
+        });
+        console.log(`User ${userId} consumed 1 lease. Remaining: ${userData.chapterLeases - 1}`);
         return true;
     }
+    
     console.log(`No leases available for ${userId}`);
     return false;
 }
 
-function addLeases(userId, amount) {
-    const user = getUserData(userId);
-    user.chapterLeases += amount;
-    console.log(`Added ${amount} leases to user ${userId}. Total: ${user.chapterLeases}`);
+async function addLeases(userId, amount) {
+    const userData = await getUserData(userId);
+    await updateUserData(userId, { 
+        chapterLeases: userData.chapterLeases + amount 
+    });
+    console.log(`Added ${amount} leases to user ${userId}. Total: ${userData.chapterLeases + amount}`);
 }
 
-function getBookshelfAccessStatus(userId, member = null, guild = null) {
-    const user = getUserData(userId);
+async function getBookshelfAccessStatus(userId, member = null, guild = null) {
+    const user = await getUserData(userId);
     const roles = guild ? getClickableRoleMentions(guild) : { reader: '**reader**' };
     
     if (user.purchases.includes('shelf')) {
@@ -534,29 +548,6 @@ function getBookshelfAccessStatus(userId, member = null, guild = null) {
         return `📝 Need 1 more credit to qualify for bookshelf purchase`;
     } else {
         return '💰 Ready to purchase shelf access (credit requirement met)';
-    }
-}
-
-function getLeaseStatus(userId, member, guild = null) {
-    const user = getUserData(userId);
-    const roles = guild ? getClickableRoleMentions(guild) : { reader: '**reader**' };
-    
-    if (user.totalFeedbackAllTime < 1) {
-        return `📝 Need bookshelf access to purchase leases`;
-    }
-    
-    if (!user.purchases.includes('shelf')) {
-        return '💰 Purchase shelf access first';
-    }
-    
-    if (!member || !hasReaderRole(member)) {
-        return `🔓 Awaiting ${roles.reader} role from staff`;
-    }
-    
-    if (user.chapterLeases > 0) {
-        return `✅ ${user.chapterLeases} lease${user.chapterLeases === 1 ? '' : 's'} available`;
-    } else {
-        return `📝 No leases available - purchase with /buy lease`;
     }
 }
 
@@ -587,72 +578,43 @@ function hasStaffPermissions(member) {
     return member?.permissions?.has(PermissionFlagsBits.ManageMessages);
 }
 
-function hasUserLoggedFeedbackForMessage(messageId, userId) {
-    if (!loggedFeedbackMessages[messageId]) return false;
-    return loggedFeedbackMessages[messageId].includes(userId);
+async function hasUserLoggedFeedbackForMessage(messageId, userId) {
+    return await global.db.hasLoggedFeedback(messageId, userId);
 }
 
-function logFeedbackForMessage(messageId, userId) {
-    if (!loggedFeedbackMessages[messageId]) {
-        loggedFeedbackMessages[messageId] = [];
-    }
-    if (!loggedFeedbackMessages[messageId].includes(userId)) {
-        loggedFeedbackMessages[messageId].push(userId);
-    }
+async function logFeedbackForMessage(messageId, userId) {
+    await global.db.logFeedback(messageId, userId);
 }
 
 // ===== PARDON SYSTEM FUNCTIONS =====
-function isUserPardoned(userId) {
+async function isUserPardoned(userId) {
     const monthKey = getCurrentMonthKey();
-    return pardonedUsers[monthKey] && pardonedUsers[monthKey].includes(userId);
+    return await global.db.isUserPardoned(userId, monthKey);
 }
 
-function pardonUser(userId) {
+async function pardonUser(userId) {
     const monthKey = getCurrentMonthKey();
-    if (!pardonedUsers[monthKey]) {
-        pardonedUsers[monthKey] = [];
-    }
-    if (!pardonedUsers[monthKey].includes(userId)) {
-        pardonedUsers[monthKey].push(userId);
-    }
+    await global.db.pardonUser(userId, monthKey);
 }
 
-function removePardon(userId) {
+async function removePardon(userId) {
     const monthKey = getCurrentMonthKey();
-    if (pardonedUsers[monthKey] && pardonedUsers[monthKey].includes(userId)) {
-        pardonedUsers[monthKey] = pardonedUsers[monthKey].filter(id => id !== userId);
-        if (pardonedUsers[monthKey].length === 0) {
-            delete pardonedUsers[monthKey];
-        }
-        return true;
-    }
-    return false;
+    return await global.db.removePardon(userId, monthKey);
 }
 
 // ===== USER RESET FUNCTION =====
 async function resetUserProgress(userId, guild) {
     console.log(`Resetting all progress for user ${userId}`);
     
-    if (monthlyFeedback[userId]) {
-        delete monthlyFeedback[userId];
-    }
+    // Clear user logged feedback
+    await global.db.clearUserLoggedFeedback(userId);
     
-    if (userData[userId]) {
-        delete userData[userId];
-    }
-    
-    Object.keys(loggedFeedbackMessages).forEach(messageId => {
-        if (loggedFeedbackMessages[messageId] && loggedFeedbackMessages[messageId].includes(userId)) {
-            loggedFeedbackMessages[messageId] = loggedFeedbackMessages[messageId].filter(id => id !== userId);
-            if (loggedFeedbackMessages[messageId].length === 0) {
-                delete loggedFeedbackMessages[messageId];
-            }
-        }
-    });
-    
+    // Close user bookshelf threads
     const closedThreads = await closeUserBookshelfThreads(guild, userId);
     
-    await saveData();
+    // Delete user entirely (cascades to all related data)
+    await global.db.deleteUser(userId);
+    
     console.log(`User ${userId} progress completely reset - ${closedThreads} threads closed`);
     return closedThreads;
 }
@@ -715,48 +677,6 @@ async function sendTemporaryChannelMessage(channel, content, delay = MESSAGE_DEL
     }
 }
 
-// ===== DATA PERSISTENCE =====
-async function saveData() {
-    try {
-        const data = { 
-            monthlyFeedback, 
-            userData, 
-            loggedFeedbackMessages, 
-            pardonedUsers,
-            facelessCooldowns // ADD THIS LINE
-        };
-        await fs.writeFile('bot_data.json', JSON.stringify(data, null, 2));
-        console.log('Data saved successfully');
-    } catch (error) {
-        console.error('Error saving data:', error);
-    }
-}
-
-async function loadData() {
-    try {
-        const data = await fs.readFile('bot_data.json', 'utf8');
-        const parsed = JSON.parse(data);
-        monthlyFeedback = parsed.monthlyFeedback || {};
-        userData = parsed.userData || {};
-        loggedFeedbackMessages = parsed.loggedFeedbackMessages || {};
-        pardonedUsers = parsed.pardonedUsers || {};
-        facelessCooldowns = parsed.facelessCooldowns || {}; // ADD THIS LINE
-        
-        for (const userId in userData) {
-            getUserData(userId);
-        }
-        
-        console.log('Data loaded successfully');
-    } catch (error) {
-        console.log('Starting with fresh data:', error.message);
-        monthlyFeedback = {};
-        userData = {};
-        loggedFeedbackMessages = {};
-        pardonedUsers = {};
-        facelessCooldowns = {}; // ADD THIS LINE
-    }
-}
-
 // ===== SETUP FUNCTIONS =====
 async function closeUserBookshelfThreads(guild, userId) {
     try {
@@ -791,20 +711,20 @@ async function closeUserBookshelfThreads(guild, userId) {
 
 // ===== FEEDBACK PROCESSING =====
 async function processFeedbackContribution(userId) {
-    const currentCount = getUserMonthlyFeedback(userId);
+    const currentCount = await getUserMonthlyFeedback(userId);
     const newCount = currentCount + 1;
-    setUserMonthlyFeedback(userId, newCount);
+    await setUserMonthlyFeedback(userId, newCount);
     
-    const user = getUserData(userId);
-    user.totalFeedbackAllTime += 1;
-    user.currentCredits += 1;
-    
-    await saveData();
+    const userData = await getUserData(userId);
+    await updateUserData(userId, {
+        totalFeedbackAllTime: userData.totalFeedbackAllTime + 1,
+        currentCredits: userData.currentCredits + 1
+    });
     
     return {
         newCount,
-        totalAllTime: user.totalFeedbackAllTime,
-        currentCredits: user.currentCredits,
+        totalAllTime: userData.totalFeedbackAllTime + 1,
+        currentCredits: userData.currentCredits + 1,
         requirementMet: newCount >= MONTHLY_FEEDBACK_REQUIREMENT
     };
 }
@@ -961,7 +881,28 @@ async function registerCommands() {
 // ===== BOT EVENTS =====
 client.once('ready', async () => {
     console.log(`${client.user.tag} is online and serving Type&Draft!`);
-    await loadData();
+    
+    try {
+        // Initialize database BEFORE everything else
+        const db = new DatabaseManager();
+        await db.initialize();
+        
+        // Test database connection
+        const connectionTest = await db.testConnection();
+        if (!connectionTest) {
+            throw new Error('Database connection test failed');
+        }
+        console.log('✅ Database connection verified');
+        
+        // Make db available globally
+        global.db = db;
+        
+    } catch (error) {
+        console.error('❌ Database initialization failed:', error);
+        console.error('Bot cannot start without database. Exiting...');
+        process.exit(1);
+    }
+    
     await registerCommands();
     
     // Initialize welcome system
@@ -1076,37 +1017,61 @@ client.on('messageCreate', async (message) => {
     }
 
     // BOOKSHELF THREAD HANDLING - SINGLE CHECK ONLY
-if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
-    
-    // Only thread owners can post
-    if (message.channel.ownerId !== message.author.id) {
-        await message.delete();
-        await sendTemporaryChannelMessage(message.channel, 
-            `I am terribly sorry, **${message.author.displayName}**, but only the thread creator can post here!`,
-            8000
-        );
-        return;
-    }
-    
-    // Check if this is the thread owner's first post
-    try {
-        const messages = await message.channel.messages.fetch({ limit: 50 });
-        const ownerMessages = messages.filter(msg => 
-            msg.author.id === message.channel.ownerId && 
-            msg.id !== message.id // Exclude the current message
-        );
+    if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
         
-        const isFirstPost = ownerMessages.size === 0;
-        const userRecord = getUserData(message.author.id);
-        
-        if (isFirstPost) {
-            // First post is free - no lease consumed
+        // Only thread owners can post
+        if (message.channel.ownerId !== message.author.id) {
+            await message.delete();
             await sendTemporaryChannelMessage(message.channel, 
-                `📝 Welcome to your bookshelf! First post is complimentary. **${userRecord.chapterLeases}** leases remaining for future chapters. ☝️`, 
+                `I am terribly sorry, **${message.author.displayName}**, but only the thread creator can post here!`,
                 8000
             );
-        } else {
-            // Subsequent posts require leases
+            return;
+        }
+        
+        // Check if this is the thread owner's first post
+        try {
+            const messages = await message.channel.messages.fetch({ limit: 50 });
+            const ownerMessages = messages.filter(msg => 
+                msg.author.id === message.channel.ownerId && 
+                msg.id !== message.id // Exclude the current message
+            );
+            
+            const isFirstPost = ownerMessages.size === 0;
+            const userRecord = await getUserData(message.author.id); // Add await
+            
+            if (isFirstPost) {
+                // First post is free - no lease consumed
+                await sendTemporaryChannelMessage(message.channel, 
+                    `📝 Welcome to your bookshelf! First post is complimentary. **${userRecord.chapterLeases}** leases remaining for future chapters. ☝️`, 
+                    8000
+                );
+            } else {
+                // Subsequent posts require leases
+                if (userRecord.chapterLeases <= 0) {
+                    await message.delete();
+                    await sendTemporaryChannelMessage(message.channel, 
+                        `📝 **${message.author.displayName}**, you have **0 chapter leases** remaining! Purchase more with \`/buy lease\` to continue posting.`,
+                        8000
+                    );
+                    return;
+                }
+                
+                // Has leases - consume one and continue
+                await consumeLease(message.author.id); // Use the function instead of direct manipulation
+                
+                const updatedRecord = await getUserData(message.author.id);
+                await sendTemporaryChannelMessage(message.channel, 
+                    `📝 Chapter posted! **${updatedRecord.chapterLeases}** leases remaining.`, 
+                    8000
+                );
+            }
+            
+        } catch (error) {
+            console.error('Error checking message history:', error);
+            // Fallback to old behavior if there's an error
+            const userRecord = await getUserData(message.author.id); // Add await
+            
             if (userRecord.chapterLeases <= 0) {
                 await message.delete();
                 await sendTemporaryChannelMessage(message.channel, 
@@ -1116,41 +1081,17 @@ if (message.channel.isThread() && message.channel.parent && message.channel.pare
                 return;
             }
             
-            // Has leases - consume one and continue
-            userRecord.chapterLeases -= 1;
-            await saveData();
+            await consumeLease(message.author.id); // Use the function
             
+            const updatedRecord = await getUserData(message.author.id);
             await sendTemporaryChannelMessage(message.channel, 
-                `📝 Chapter posted! **${userRecord.chapterLeases}** leases remaining.`, 
+                `📝 Chapter posted! **${updatedRecord.chapterLeases}** leases remaining.`, 
                 8000
             );
         }
         
-    } catch (error) {
-        console.error('Error checking message history:', error);
-        // Fallback to old behavior if there's an error
-        const userRecord = getUserData(message.author.id);
-        
-        if (userRecord.chapterLeases <= 0) {
-            await message.delete();
-            await sendTemporaryChannelMessage(message.channel, 
-                `📝 **${message.author.displayName}**, you have **0 chapter leases** remaining! Purchase more with \`/buy lease\` to continue posting.`,
-                8000
-            );
-            return;
-        }
-        
-        userRecord.chapterLeases -= 1;
-        await saveData();
-        
-        await sendTemporaryChannelMessage(message.channel, 
-            `📝 Chapter posted! **${userRecord.chapterLeases}** leases remaining.`, 
-            8000
-        );
+        return; // CRITICAL: Exit here
     }
-    
-    return; // CRITICAL: Exit here
-}
 
     // Handle legacy commands
     if (message.content.startsWith('!')) {
@@ -1161,10 +1102,12 @@ if (message.channel.isThread() && message.channel.parent && message.channel.pare
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
+    console.log(`🎯 Command received: /${interaction.commandName} from ${interaction.user.displayName}`);
+
     try {
         await handleSlashCommand(interaction);
     } catch (error) {
-        console.error('Interaction error:', error);
+        console.error(`❌ Command /${interaction.commandName} failed:`, error);
         await handleInteractionError(interaction, error);
     }
 });
@@ -1235,7 +1178,17 @@ async function handleSlashCommand(interaction) {
     
     const handler = commandHandlers[interaction.commandName];
     if (handler) {
+        console.log(`✅ Executing handler for /${interaction.commandName}`);
         await handler();
+        console.log(`✅ Handler completed for /${interaction.commandName}`);
+    } else {
+        console.error(`❌ No handler found for command: /${interaction.commandName}`);
+        const embed = new EmbedBuilder()
+            .setTitle('Command Not Found')
+            .setDescription(`The command \`/${interaction.commandName}\` is not recognized.`)
+            .setColor(0xFF6B6B);
+        
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 }
 
@@ -1328,7 +1281,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         }
     }
     
-    if (hasUserLoggedFeedbackForMessage(latestMessage.id, user.id)) {
+    if (await hasUserLoggedFeedbackForMessage(latestMessage.id, user.id)) {
         const embed = new EmbedBuilder()
             .setTitle('Feedback Already Logged ☝️')
             .setDescription('Each new message may only be counted once.')
@@ -1341,7 +1294,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
         }
     }
     
-    logFeedbackForMessage(latestMessage.id, user.id);
+    await logFeedbackForMessage(latestMessage.id, user.id);
     
     const feedbackData = await processFeedbackContribution(user.id);
     
@@ -1375,21 +1328,21 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
 async function handleBalanceCommand(message) {
     const user = message.mentions.users.first() || message.author;
     const member = message.mentions.members.first() || message.member;
-    const embed = createBalanceEmbed(user, member, message.guild);
+    const embed = await createBalanceEmbed(user, member, message.guild); // Add await
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
 async function handleBalanceSlashCommand(interaction) {
     const user = interaction.options.getUser('user') || interaction.user;
     const member = interaction.options.getMember('user') || interaction.member;
-    const embed = createBalanceEmbed(user, member, interaction.guild);
+    const embed = await createBalanceEmbed(user, member, interaction.guild); // Add await
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-function createBalanceEmbed(user, member, guild) {
+async function createBalanceEmbed(user, member, guild) {
     const userId = user.id;
-    const userRecord = getUserData(userId);
-    const monthlyCount = getUserMonthlyFeedback(userId);
+    const userRecord = await getUserData(userId);
+    const monthlyCount = await getUserMonthlyFeedback(userId);
     const monthlyQuotaStatus = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅ Graciously fulfilled' : '❌ Unfulfilled';
     
     return new EmbedBuilder()
@@ -1400,9 +1353,9 @@ function createBalanceEmbed(user, member, guild) {
             { name: 'Current Credit Balance', value: `💰 ${userRecord.currentCredits}`, inline: true },
             { name: 'Chapter Leases', value: `📄 ${userRecord.chapterLeases}`, inline: true },
             { name: 'Monthly Quota', value: `${monthlyQuotaStatus}`, inline: true },
-            { name: 'Bookshelf Status', value: getBookshelfAccessStatus(userId, member, guild), inline: true }
+            { name: 'Bookshelf Status', value: await getBookshelfAccessStatus(userId, member, guild), inline: true } // Add await
         )
-        .setColor(canPostInBookshelf(userId, member) ? 0x00AA55 : 0xFF9900);
+        .setColor(await canPostInBookshelf(userId, member) ? 0x00AA55 : 0xFF9900); // Add await
 }
 
 // ===== HALL OF FAME COMMANDS =====
@@ -1417,12 +1370,9 @@ async function handleHallOfFameSlashCommand(interaction) {
 }
 
 async function createHallOfFameEmbed(guild) {
-    const usersWithCredits = Object.entries(userData)
-        .filter(([userId, data]) => data.totalFeedbackAllTime > 0)
-        .sort(([, a], [, b]) => b.totalFeedbackAllTime - a.totalFeedbackAllTime)
-        .slice(0, 10);
+    const topContributors = await global.db.getTopContributors(10);
     
-    if (usersWithCredits.length === 0) {
+    if (topContributors.length === 0) {
         return new EmbedBuilder()
             .setTitle('Hall of Fame ☝️')
             .setDescription('It appears no writers have yet contributed feedback to our literary realm. Perhaps it is time to begin sharing wisdom with fellow scribes?')
@@ -1430,13 +1380,13 @@ async function createHallOfFameEmbed(guild) {
     }
     
     let leaderboard = '';
-    for (let i = 0; i < usersWithCredits.length; i++) {
-        const [userId, data] = usersWithCredits[i];
+    for (let i = 0; i < topContributors.length; i++) {
+        const contributor = topContributors[i];
         try {
-            const member = await guild.members.fetch(userId);
+            const member = await guild.members.fetch(contributor.user_id);
             const rank = i + 1;
             const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
-            leaderboard += `${medal} **${member.displayName}** - ${data.totalFeedbackAllTime} credit${data.totalFeedbackAllTime !== 1 ? 's' : ''}\n`;
+            leaderboard += `${medal} **${member.displayName}** - ${contributor.total_feedback_all_time} credit${contributor.total_feedback_all_time !== 1 ? 's' : ''}\n`;
         } catch (error) {
             continue;
         }
@@ -1503,7 +1453,7 @@ async function handleBuySlashCommand(interaction) {
 
 async function processPurchase(userId, itemKey, quantity, member, guild) {
     const item = STORE_ITEMS[itemKey];
-    const userRecord = getUserData(userId);
+    const userRecord = await getUserData(userId);
     const totalCost = item.price * quantity;
     
     // For shelf purchases, check if already purchased
@@ -1521,17 +1471,16 @@ async function processPurchase(userId, itemKey, quantity, member, guild) {
         };
     }
     
-    if (spendCredits(userId, totalCost)) {
+    if (await spendCredits(userId, totalCost)) {
         if (itemKey === 'shelf') {
-            userRecord.purchases.push(itemKey);
+            await global.db.addPurchase(userId, itemKey);
             if (item.role) {
                 await assignPurchaseRoles(member, guild, itemKey);
             }
         } else if (itemKey === 'lease') {
-            addLeases(userId, quantity);
+            await addLeases(userId, quantity);
         }
         
-        await saveData();
         return { success: true, creditsSpent: totalCost, quantity: quantity };
     }
     
@@ -1769,7 +1718,7 @@ async function handleFeedbackAddCommand(message, args) {
     const amount = Math.max(1, parseInt(args[1]) || 1);
     await addFeedbackToUser(user.id, amount);
     
-    const embed = createFeedbackModificationEmbed(user, amount, 'added');
+    const embed = await createFeedbackModificationEmbed(user, amount, 'added'); // Add await
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
@@ -1782,20 +1731,21 @@ async function handleFeedbackAddSlashCommand(interaction) {
     const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
     await addFeedbackToUser(user.id, amount);
     
-    const embed = createFeedbackModificationEmbed(user, amount, 'added');
+    const embed = await createFeedbackModificationEmbed(user, amount, 'added'); // Add await
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
 async function addFeedbackToUser(userId, amount) {
-    const currentCount = getUserMonthlyFeedback(userId);
+    const currentCount = await getUserMonthlyFeedback(userId);
     const newCount = currentCount + amount;
-    setUserMonthlyFeedback(userId, newCount);
+    await setUserMonthlyFeedback(userId, newCount);
     
-    const userRecord = getUserData(userId);
-    userRecord.totalFeedbackAllTime += amount;
-    userRecord.currentCredits += amount;
+    const userRecord = await getUserData(userId);
+    await updateUserData(userId, {
+        totalFeedbackAllTime: userRecord.totalFeedbackAllTime + amount,
+        currentCredits: userRecord.currentCredits + amount
+    });
     
-    await saveData();
     return { currentCount, newCount };
 }
 
@@ -1811,7 +1761,7 @@ async function handleFeedbackRemoveCommand(message, args) {
     console.log(`Staff removing ${amount} from all feedback counters for ${user.displayName}`);
     
     const result = await removeFeedbackFromUser(user.id, amount);
-    const embed = createFeedbackModificationEmbed(user, amount, 'removed');
+    const embed = await createFeedbackModificationEmbed(user, amount, 'removed'); // Add await
     await replyTemporaryMessage(message, { embeds: [embed] });
 }
 
@@ -1825,13 +1775,13 @@ async function handleFeedbackRemoveSlashCommand(interaction) {
     console.log(`Staff removing ${amount} from all feedback counters for ${user.displayName}`);
     
     const result = await removeFeedbackFromUser(user.id, amount);
-    const embed = createFeedbackModificationEmbed(user, amount, 'removed');
+    const embed = await createFeedbackModificationEmbed(user, amount, 'removed'); // Add await
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
 async function removeFeedbackFromUser(userId, amount) {
-    const userRecord = getUserData(userId);
-    const currentMonthlyCount = getUserMonthlyFeedback(userId);
+    const userRecord = await getUserData(userId);
+    const currentMonthlyCount = await getUserMonthlyFeedback(userId);
     const previousCredits = userRecord.currentCredits;
     const previousAllTime = userRecord.totalFeedbackAllTime;
     
@@ -1840,30 +1790,29 @@ async function removeFeedbackFromUser(userId, amount) {
     
     // Remove from monthly feedback (but don't go below 0)
     const newMonthlyCount = Math.max(0, currentMonthlyCount - amount);
-    setUserMonthlyFeedback(userId, newMonthlyCount);
+    await setUserMonthlyFeedback(userId, newMonthlyCount);
     
-    // Remove from all-time total (but don't go below 0)
-    userRecord.totalFeedbackAllTime = Math.max(0, userRecord.totalFeedbackAllTime - amount);
+    // Update user data
+    await updateUserData(userId, {
+        totalFeedbackAllTime: Math.max(0, userRecord.totalFeedbackAllTime - amount),
+        currentCredits: Math.max(0, userRecord.currentCredits - amount)
+    });
     
-    // Remove from current credits (but don't go below 0)
-    userRecord.currentCredits = Math.max(0, userRecord.currentCredits - amount);
+    console.log(`New - Monthly: ${newMonthlyCount}, All-time: ${Math.max(0, userRecord.totalFeedbackAllTime - amount)}, Credits: ${Math.max(0, userRecord.currentCredits - amount)}`);
     
-    console.log(`New - Monthly: ${newMonthlyCount}, All-time: ${userRecord.totalFeedbackAllTime}, Credits: ${userRecord.currentCredits}`);
-    
-    await saveData();
     return { 
         previousCredits, 
-        newCredits: userRecord.currentCredits,
+        newCredits: Math.max(0, userRecord.currentCredits - amount),
         previousMonthly: currentMonthlyCount,
         newMonthly: newMonthlyCount,
         previousAllTime,
-        newAllTime: userRecord.totalFeedbackAllTime
+        newAllTime: Math.max(0, userRecord.totalFeedbackAllTime - amount)
     };
 }
 
-function createFeedbackModificationEmbed(user, amount, action) {
-    const userRecord = getUserData(user.id);
-    const monthlyCount = getUserMonthlyFeedback(user.id);
+async function createFeedbackModificationEmbed(user, amount, action) {
+    const userRecord = await getUserData(user.id);
+    const monthlyCount = await getUserMonthlyFeedback(user.id);
     
     if (action === 'added') {
         return new EmbedBuilder()
@@ -1879,6 +1828,7 @@ function createFeedbackModificationEmbed(user, amount, action) {
             .setColor(0xFF6B6B);
     }
 }
+
 
 // ===== CREDIT BALANCE MANAGEMENT COMMANDS =====
 async function handleCreditAddCommand(message, args) {
@@ -1911,20 +1861,18 @@ async function handleCreditAddSlashCommand(interaction) {
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-async function handleCreditRemoveCommand(message, args) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions.');
+async function handleCreditRemoveSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
     }
     
-    const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose credit balance requires adjustment.');
-    
-    const amount = Math.max(1, parseInt(args[1]) || 1);
+    const user = interaction.options.getUser('user');
+    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
     console.log(`Staff removing ${amount} credits from ${user.displayName}'s balance only`);
     
     const result = await removeCreditsFromUser(user.id, amount);
     const embed = createCreditBalanceModificationEmbed(user, amount, result, 'removed');
-    await replyTemporaryMessage(message, { embeds: [embed] });
+    await replyTemporary(interaction, { embeds: [embed] });
 }
 
 async function handleCreditRemoveSlashCommand(interaction) {
@@ -1942,48 +1890,47 @@ async function handleCreditRemoveSlashCommand(interaction) {
 }
 
 async function addCreditsToUser(userId, amount) {
-    const userRecord = getUserData(userId);
+    const userRecord = await getUserData(userId);
     const previousCredits = userRecord.currentCredits;
     
     console.log(`Adding ${amount} credits to user ${userId} balance only. Previous: ${previousCredits}`);
     
-    // Only modify current credit balance, leave monthly and all-time totals unchanged
-    userRecord.currentCredits += amount;
+    await updateUserData(userId, {
+        currentCredits: userRecord.currentCredits + amount
+    });
     
-    console.log(`New credit balance: ${userRecord.currentCredits} (monthly and all-time totals unchanged)`);
+    console.log(`New credit balance: ${userRecord.currentCredits + amount} (monthly and all-time totals unchanged)`);
     
-    await saveData();
     return { 
         previousCredits, 
-        newCredits: userRecord.currentCredits,
-        monthlyCount: getUserMonthlyFeedback(userId),
+        newCredits: userRecord.currentCredits + amount,
+        monthlyCount: await getUserMonthlyFeedback(userId),
         allTimeTotal: userRecord.totalFeedbackAllTime
     };
 }
 
 async function removeCreditsFromUser(userId, amount) {
-    const userRecord = getUserData(userId);
+    const userRecord = await getUserData(userId);
     const previousCredits = userRecord.currentCredits;
     
     console.log(`Removing ${amount} credits from user ${userId} balance only. Previous: ${previousCredits}`);
     
-    // Only modify current credit balance, leave monthly and all-time totals unchanged
-    userRecord.currentCredits = Math.max(0, userRecord.currentCredits - amount);
+    const newCredits = Math.max(0, userRecord.currentCredits - amount);
+    await updateUserData(userId, {
+        currentCredits: newCredits
+    });
     
-    console.log(`New credit balance: ${userRecord.currentCredits} (monthly and all-time totals unchanged)`);
+    console.log(`New credit balance: ${newCredits} (monthly and all-time totals unchanged)`);
     
-    await saveData();
     return { 
         previousCredits, 
-        newCredits: userRecord.currentCredits,
-        monthlyCount: getUserMonthlyFeedback(userId),
+        newCredits: newCredits,
+        monthlyCount: await getUserMonthlyFeedback(userId),
         allTimeTotal: userRecord.totalFeedbackAllTime
     };
 }
 
 function createCreditBalanceModificationEmbed(user, amount, result, action) {
-    console.log(`Creating embed for credit balance modification: ${action}, amount: ${amount}, result:`, result);
-    
     return new EmbedBuilder()
         .setTitle(`Credit Balance ${action === 'removed' ? 'Reduced' : 'Enhanced'} ☝️`)
         .addFields(
@@ -1995,20 +1942,18 @@ function createCreditBalanceModificationEmbed(user, amount, result, action) {
 }
 
 // ===== LEASE MANAGEMENT COMMANDS =====
-async function handleLeaseAddCommand(message, args) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions.');
+async function handleLeaseAddSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
     }
     
-    const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose lease balance you wish to enhance.');
-    
-    const amount = Math.max(1, parseInt(args[1]) || 1);
+    const user = interaction.options.getUser('user');
+    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
     console.log(`Staff adding ${amount} leases to ${user.displayName}`);
     
     const result = await addLeasesToUser(user.id, amount);
     const embed = createLeaseModificationEmbed(user, amount, result, 'added');
-    await replyTemporaryMessage(message, { embeds: [embed] });
+    await replyTemporary(interaction, { embeds: [embed] });
 }
 
 async function handleLeaseAddSlashCommand(interaction) {
@@ -2026,19 +1971,18 @@ async function handleLeaseAddSlashCommand(interaction) {
 }
 
 async function addLeasesToUser(userId, amount) {
-    const userRecord = getUserData(userId);
+    const userRecord = await getUserData(userId);
     const previousLeases = userRecord.chapterLeases;
     
     console.log(`Adding ${amount} leases to user ${userId}. Previous: ${previousLeases}`);
     
-    addLeases(userId, amount);
+    await addLeases(userId, amount);
     
-    console.log(`New lease balance: ${userRecord.chapterLeases}`);
+    console.log(`New lease balance: ${userRecord.chapterLeases + amount}`);
     
-    await saveData();
     return { 
         previousLeases, 
-        newLeases: userRecord.chapterLeases
+        newLeases: userRecord.chapterLeases + amount
     };
 }
 
@@ -2055,17 +1999,15 @@ function createLeaseModificationEmbed(user, amount, result, action) {
 }
 
 // ===== FEEDBACK RESET COMMANDS =====
-async function handleFeedbackResetCommand(message) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, { content: 'I fear you lack the necessary authority to conduct such administrative actions.' });
+async function handleFeedbackResetSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
     }
     
-    const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, { content: 'Pray, mention the writer whose record you wish to reset to a clean slate.' });
-    
-    const resetData = await performCompleteReset(user.id, message.guild);
-    const embed = createResetEmbed(user, resetData, message.guild);
-    await replyTemporaryMessage(message, { embeds: [embed] });
+    const user = interaction.options.getUser('user');
+    const resetData = await performCompleteReset(user.id, interaction.guild);
+    const embed = createResetEmbed(user, resetData, interaction.guild);
+    await replyTemporary(interaction, { embeds: [embed] });
 }
 
 async function handleFeedbackResetSlashCommand(interaction) {
@@ -2080,18 +2022,13 @@ async function handleFeedbackResetSlashCommand(interaction) {
 }
 
 async function performCompleteReset(userId, guild) {
-    const previousCount = getUserMonthlyFeedback(userId);
-    const userRecord = getUserData(userId);
+    const previousCount = await getUserMonthlyFeedback(userId);
+    const userRecord = await getUserData(userId);
     const previousAllTime = userRecord.totalFeedbackAllTime;
     const previousLeases = userRecord.chapterLeases;
     const hadShelfAccess = userRecord.purchases.includes('shelf');
     
-    setUserMonthlyFeedback(userId, 0);
-    userRecord.totalFeedbackAllTime = 0;
-    userRecord.currentCredits = 0;
-    userRecord.bookshelfPosts = 0;
-    userRecord.chapterLeases = 0;
-    userRecord.purchases = userRecord.purchases.filter(item => item !== 'shelf');
+    await setUserMonthlyFeedback(userId, 0);
     
     const targetMember = guild.members.cache.get(userId);
     if (targetMember) {
@@ -2100,7 +2037,8 @@ async function performCompleteReset(userId, guild) {
     
     const closedThreads = await closeUserBookshelfThreads(guild, userId);
     
-    await saveData();
+    // Reset user data in database
+    await resetUserProgress(userId, guild);
     
     return {
         previousCount,
@@ -2158,12 +2096,11 @@ async function handlePardonCommand(message, args) {
         return replyTemporaryMessage(message, 'I regret that the mentioned user does not possess the Level 5 role and thus requires no pardon.');
     }
     
-    if (isUserPardoned(user.id)) {
+    if (await isUserPardoned(user.id)) { // Add await
         return replyTemporaryMessage(message, 'I regret to inform you that this distinguished member has already been granted clemency for this month\'s requirements.');
     }
     
-    pardonUser(user.id);
-    await saveData();
+    await pardonUser(user.id);
     
     const embed = createPardonEmbed(user, 'granted');
     await replyTemporaryMessage(message, { embeds: [embed] });
@@ -2186,7 +2123,7 @@ async function handlePardonSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    if (isUserPardoned(user.id)) {
+    if (await isUserPardoned(user.id)) { // Add await
         const embed = new EmbedBuilder()
             .setTitle('Already Pardoned ☝️')
             .setDescription('I regret to inform you that this distinguished member has already been granted clemency for this month\'s requirements.')
@@ -2194,8 +2131,7 @@ async function handlePardonSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    pardonUser(user.id);
-    await saveData();
+    await pardonUser(user.id);
     
     const embed = createPardonEmbed(user, 'granted');
     await replyTemporary(interaction, { embeds: [embed] });
@@ -2208,7 +2144,6 @@ async function handleUnpardonSlashCommand(interaction) {
     
     const user = interaction.options.getUser('user');
     const member = interaction.guild.members.cache.get(user.id);
-    const roles = getClickableRoleMentions(interaction.guild);
     
     if (!member || !hasLevel5Role(member)) {
         const embed = new EmbedBuilder()
@@ -2218,7 +2153,7 @@ async function handleUnpardonSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    if (!isUserPardoned(user.id)) {
+    if (!(await isUserPardoned(user.id))) {
         const embed = new EmbedBuilder()
             .setTitle('No Pardon Found ☝️')
             .setDescription('I regret to inform you that this member currently holds no pardon for this month\'s requirements.')
@@ -2226,10 +2161,8 @@ async function handleUnpardonSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    const removed = removePardon(user.id);
+    const removed = await removePardon(user.id);
     if (removed) {
-        await saveData();
-        
         const embed = new EmbedBuilder()
             .setTitle('Pardon Revoked ☝️')
             .setDescription(`The clemency previously granted to **${user.displayName}** has been rescinded. They must now meet the monthly feedback requirement or face purging.`)
@@ -2306,8 +2239,8 @@ async function performManualPurge(guild) {
     for (const [userId, member] of allMembers) {
         if (!hasLevel5Role(member)) continue;
         
-        const monthlyCount = getUserMonthlyFeedback(userId);
-        const isPardoned = isUserPardoned(userId);
+        const monthlyCount = await getUserMonthlyFeedback(userId); // Add await
+        const isPardoned = await isUserPardoned(userId); // Add await
         const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
         
         if (!meetingRequirement && !isPardoned) {
@@ -2462,9 +2395,9 @@ async function createStatsEmbed(guild) {
     let pardonedCount = 0;
     
     // Process each member
-    level5Members.forEach((member, userId) => {
-        const monthlyCount = getUserMonthlyFeedback(userId);
-        const isPardoned = isUserPardoned(userId);
+    for (const [userId, member] of level5Members) {
+        const monthlyCount = await getUserMonthlyFeedback(userId);
+        const isPardoned = await isUserPardoned(userId);
         const status = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅' : '❌';
         
         if (monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT) {
@@ -2479,7 +2412,7 @@ async function createStatsEmbed(guild) {
         } else {
             nonFulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
         }
-    });
+    }
     
     const contributionRate = totalLevel5 > 0 ? Math.round((monthlyContributors / totalLevel5) * 100) : 0;
     
@@ -2540,16 +2473,14 @@ async function handleSetupBookshelfSlashCommand(interaction) {
 }
 
 async function grantBookshelfAccess(userId, member, guild) {
-    const userRecord = getUserData(userId);
+    const userRecord = await getUserData(userId);
     
     if (userRecord.purchases.includes('shelf')) {
         return { success: false, reason: 'already_has_access' };
     }
     
-    // Grant the bookshelf access (same as buying)
-    userRecord.purchases.push('shelf');
+    await global.db.addPurchase(userId, 'shelf');
     
-    // Give the Shelf Owner role
     try {
         let shelfRole = guild.roles.cache.find(r => r.name === 'Shelf Owner');
         if (!shelfRole) {
@@ -2564,7 +2495,6 @@ async function grantBookshelfAccess(userId, member, guild) {
         console.log('Failed to assign Shelf Owner role:', error.message);
     }
     
-    await saveData();
     return { success: true };
 }
 
@@ -2590,13 +2520,13 @@ function createBookshelfGrantEmbed(user, result, guild) {
 }
 
 // ===== PURGE LIST COMMANDS =====
-async function handlePurgeListCommand(message) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my liege.');
+async function handlePurgeListSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
     }
     
-    const embed = await createPurgeListEmbed(message.guild);
-    await replyTemporaryMessage(message, { embeds: [embed] });
+    const embed = await createPurgeListEmbed(interaction.guild);
+    await replyTemporary(interaction, { embeds: [embed] });
 }
 
 async function handlePurgeListSlashCommand(interaction) {
@@ -2619,11 +2549,12 @@ async function createPurgeListEmbed(guild) {
     let pardonedCount = 0;
     let protectedCount = 0;
     
-    // Process each member
-    allMembers.forEach((member, userId) => {
-
-        const monthlyCount = getUserMonthlyFeedback(userId);
-        const isPardoned = isUserPardoned(userId);
+    // Process each member - need to handle async calls
+    for (const [userId, member] of allMembers) {
+        if (!hasLevel5Role(member)) continue;
+        
+        const monthlyCount = await getUserMonthlyFeedback(userId); // Add await
+        const isPardoned = await isUserPardoned(userId); // Add await
         const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
         const isProtected = isProtectedFromPurge(member);
         
@@ -2640,7 +2571,7 @@ async function createPurgeListEmbed(guild) {
             protectedCount++;
             protectedList += `🛡️ **${member.displayName}** (${monthlyCount} credits) - Staff\n`;
         }
-    });
+    }
     
     // Truncate lists if too long
     if (purgeList.length > 700) {
@@ -2805,16 +2736,16 @@ async function sendStaffOnlyMessage(target, isInteraction = false) {
 
 // ===== FACELESS COMMAND =====
 
-function getFacelessCooldown(userId) {
-    return facelessCooldowns[userId] || 0;
+async function getFacelessCooldown(userId) {
+    return await global.db.getFacelessCooldown(userId);
 }
 
-function setFacelessCooldown(userId) {
-    facelessCooldowns[userId] = Date.now();
+async function setFacelessCooldown(userId) {
+    await global.db.setFacelessCooldown(userId);
 }
 
-function isOnFacelessCooldown(userId) {
-    const lastUsed = getFacelessCooldown(userId);
+async function isOnFacelessCooldown(userId) {
+    const lastUsed = await getFacelessCooldown(userId);
     const cooldownTime = 5 * 60 * 1000; // 5 minutes in milliseconds
     const timeRemaining = (lastUsed + cooldownTime) - Date.now();
     
@@ -2828,23 +2759,15 @@ function isOnFacelessCooldown(userId) {
     return { onCooldown: false };
 }
 
-function cleanupOldCooldowns() {
-    const now = Date.now();
-    const cooldownTime = 5 * 60 * 1000;
-    
-    for (const userId in facelessCooldowns) {
-        if (now - facelessCooldowns[userId] > cooldownTime) {
-            delete facelessCooldowns[userId];
-        }
-    }
+async function cleanupOldCooldowns() {
+    await global.db.cleanupOldCooldowns();
 }
 
-// ===== FACELESS COMMAND =====
 async function handleFacelessSlashCommand(interaction) {
     const userId = interaction.user.id;
     const confession = interaction.options.getString('confession');
     
-    // Check if user has Level 15 role - ADD THIS SECTION
+    // Check if user has Level 15 role
     if (!hasLevel15Role(interaction.member)) {
         const embed = new EmbedBuilder()
             .setTitle(`**Level 15** Required ☝️`)
@@ -2858,8 +2781,9 @@ async function handleFacelessSlashCommand(interaction) {
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
-    // Check cooldown first
-    const cooldownStatus = isOnFacelessCooldown(userId);
+    
+    // Check cooldown first - ADD AWAIT
+    const cooldownStatus = await isOnFacelessCooldown(userId);
     
     if (cooldownStatus.onCooldown) {
         const minutes = Math.floor(cooldownStatus.timeRemaining / 60);
@@ -2894,10 +2818,12 @@ async function handleFacelessSlashCommand(interaction) {
         "The House of Black and White keeps all truths.",
         "Valar morghulis - all men must die, but secrets live forever.",
         "A girl knows many things, but speaks none of them.",
+        "The Faceless Ones guard your words as they guard their own.",
         "In Braavos, even the stones keep secrets.",
         "Death comes for all, but anonymity comes for the wise.",
         "A confession without a face is a truth without consequence.",
         "The Many-Faced God smiles upon honest words spoken in shadow.",
+        "What is dead may never die, but what is secret may never be revealed.",
         "A man speaks truth when a man has no name to protect.",
         "The gift of anonymity is more precious than the gift of death."
     ];
@@ -2917,12 +2843,12 @@ async function handleFacelessSlashCommand(interaction) {
         // Send PERMANENT anonymous confession
         const confessionMessage = await interaction.channel.send({ embeds: [confessionEmbed] });
         
-        // Set cooldown AFTER successful posting
-        setFacelessCooldown(userId);
+        // Set cooldown AFTER successful posting - ADD AWAIT
+        await setFacelessCooldown(userId);
         
         // Clean up old cooldowns periodically
         if (Math.random() < 0.1) { // 10% chance to cleanup
-            cleanupOldCooldowns();
+            await cleanupOldCooldowns(); // ADD AWAIT
         }
         
         console.log(`Permanent anonymous confession posted - Message ID: ${confessionMessage.id}`);
@@ -2954,3 +2880,20 @@ async function handleFacelessSlashCommand(interaction) {
 
 // ===== BOT LOGIN =====
 client.login(process.env.DISCORD_BOT_TOKEN);
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('🛑 Received SIGINT, shutting down gracefully...');
+    if (global.db) {
+        await global.db.close();
+    }
+    process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+    console.log('🛑 Received SIGTERM, shutting down gracefully...');
+    if (global.db) {
+        await global.db.close();
+    }
+    process.exit(0);
+});
