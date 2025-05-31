@@ -58,10 +58,12 @@ const WELCOME_CONFIG = {
 };
 
 // ===== DATA STORAGE =====
+
 let monthlyFeedback = {};
 let userData = {};
 let loggedFeedbackMessages = {};
 let pardonedUsers = {};
+let facelessCooldowns = {};
 
 // ===== ACTIVITY MONITORING FUNCTIONS =====
 async function sendActivityNotification(guild, type, data) {
@@ -697,7 +699,13 @@ async function sendTemporaryChannelMessage(channel, content, delay = MESSAGE_DEL
 // ===== DATA PERSISTENCE =====
 async function saveData() {
     try {
-        const data = { monthlyFeedback, userData, loggedFeedbackMessages, pardonedUsers };
+        const data = { 
+            monthlyFeedback, 
+            userData, 
+            loggedFeedbackMessages, 
+            pardonedUsers,
+            facelessCooldowns // ADD THIS LINE
+        };
         await fs.writeFile('bot_data.json', JSON.stringify(data, null, 2));
         console.log('Data saved successfully');
     } catch (error) {
@@ -713,6 +721,7 @@ async function loadData() {
         userData = parsed.userData || {};
         loggedFeedbackMessages = parsed.loggedFeedbackMessages || {};
         pardonedUsers = parsed.pardonedUsers || {};
+        facelessCooldowns = parsed.facelessCooldowns || {}; // ADD THIS LINE
         
         for (const userId in userData) {
             getUserData(userId);
@@ -725,6 +734,7 @@ async function loadData() {
         userData = {};
         loggedFeedbackMessages = {};
         pardonedUsers = {};
+        facelessCooldowns = {}; // ADD THIS LINE
     }
 }
 
@@ -2689,7 +2699,7 @@ function createHelpEmbed(guild) {
         .setTitle('Essential Commands at Your Service ☝️')
         .addFields(
             { 
-                name: `📝 Earning Feedback Credits (${roles.level5} Required)`, 
+                name: `📝 Earning Feedback Credits (**Level 5** Required)`, 
                 value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful feedback\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback!`, 
                 inline: false 
             },
@@ -2775,9 +2785,60 @@ async function sendStaffOnlyMessage(target, isInteraction = false) {
 }
 
 // ===== FACELESS COMMAND =====
+
+function getFacelessCooldown(userId) {
+    return facelessCooldowns[userId] || 0;
+}
+
+function setFacelessCooldown(userId) {
+    facelessCooldowns[userId] = Date.now();
+}
+
+function isOnFacelessCooldown(userId) {
+    const lastUsed = getFacelessCooldown(userId);
+    const cooldownTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+    const timeRemaining = (lastUsed + cooldownTime) - Date.now();
+    
+    if (timeRemaining > 0) {
+        return {
+            onCooldown: true,
+            timeRemaining: Math.ceil(timeRemaining / 1000) // seconds remaining
+        };
+    }
+    
+    return { onCooldown: false };
+}
+
+function cleanupOldCooldowns() {
+    const now = Date.now();
+    const cooldownTime = 5 * 60 * 1000;
+    
+    for (const userId in facelessCooldowns) {
+        if (now - facelessCooldowns[userId] > cooldownTime) {
+            delete facelessCooldowns[userId];
+        }
+    }
+}
+
 // ===== FACELESS COMMAND =====
 async function handleFacelessSlashCommand(interaction) {
+    const userId = interaction.user.id;
     const confession = interaction.options.getString('confession');
+    
+    // Check cooldown first
+    const cooldownStatus = isOnFacelessCooldown(userId);
+    if (cooldownStatus.onCooldown) {
+        const minutes = Math.floor(cooldownStatus.timeRemaining / 60);
+        const seconds = cooldownStatus.timeRemaining % 60;
+        const timeString = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+        
+        const cooldownEmbed = new EmbedBuilder()
+            .setTitle('The Many-Faced God Requires Patience ☝️')
+            .setDescription(`The shadows must settle before you can confess again. Please, wait **${timeString}**.`)
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [cooldownEmbed], ephemeral: true }, 10000);
+    }
     
     // Don't allow in forum channels
     if (interaction.channel.isThread() && interaction.channel.parent && 
@@ -2799,10 +2860,14 @@ async function handleFacelessSlashCommand(interaction) {
         "The House of Black and White keeps all truths.",
         "Valar morghulis - all men must die, but secrets live forever.",
         "A girl knows many things, but speaks none of them.",
+        "The Faceless Ones guard your words as they guard their own.",
         "In Braavos, even the stones keep secrets.",
+        "Death comes for all, but anonymity comes for the wise.",
         "A confession without a face is a truth without consequence.",
         "The Many-Faced God smiles upon honest words spoken in shadow.",
+        "What is dead may never die, but what is secret may never be revealed.",
         "A man speaks truth when a man has no name to protect.",
+        "The gift of anonymity is more precious than the gift of death."
     ];
     
     // Select random postscript
@@ -2816,19 +2881,43 @@ async function handleFacelessSlashCommand(interaction) {
         .setFooter({ text: randomPostscript })
         .setTimestamp();
     
-    // Send anonymous confession immediately to channel
-    await interaction.channel.send({ embeds: [confessionEmbed] });
-    
-    // Send ephemeral confirmation (only user sees this)
-    const confirmEmbed = new EmbedBuilder()
-        .setTitle('🎭 Confession Delivered')
-        .setDescription('Your words have been whispered to the shadows. No trace remains.')
-        .setColor(0x2F4F4F);
-    
-    await interaction.reply({ embeds: [confirmEmbed], ephemeral: true });
-    
-    // Minimal logging (no confession content)
-    console.log(`Anonymous confession posted in #${interaction.channel.name}`);
+    try {
+        // Send PERMANENT anonymous confession
+        const confessionMessage = await interaction.channel.send({ embeds: [confessionEmbed] });
+        
+        // Set cooldown AFTER successful posting
+        setFacelessCooldown(userId);
+        
+        // Clean up old cooldowns periodically
+        if (Math.random() < 0.1) { // 10% chance to cleanup
+            cleanupOldCooldowns();
+        }
+        
+        console.log(`Permanent anonymous confession posted - Message ID: ${confessionMessage.id}`);
+        
+        // Send ephemeral confirmation (only user sees this)
+        const confirmEmbed = new EmbedBuilder()
+            .setTitle('🎭 Confession Delivered')
+            .setDescription('Your words have been whispered to the shadows. No trace remains. The confession is permanent.')
+            .addFields({
+                name: 'Next Confession Available',
+                value: 'In 5 minutes',
+                inline: true
+            })
+            .setColor(0x2F4F4F);
+        
+        await interaction.reply({ embeds: [confirmEmbed], ephemeral: true });
+        
+    } catch (error) {
+        console.error('Error posting faceless confession:', error);
+        
+        const errorEmbed = new EmbedBuilder()
+            .setTitle('Confession Failed ☝️')
+            .setDescription('The shadows themselves reject your words. Try again.')
+            .setColor(0xFF6B6B);
+        
+        await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+    }
 }
 
 // ===== BOT LOGIN =====
