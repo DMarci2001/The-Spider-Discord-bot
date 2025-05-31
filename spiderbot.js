@@ -2092,9 +2092,6 @@ async function handlePardonCommand(message, args) {
     if (!user) return replyTemporaryMessage(message, 'Pray, mention the Level 5 member you wish to pardon from this month\'s feedback requirement.');
     
     const member = message.guild.members.cache.get(user.id);
-    if (!member || !hasLevel5Role(member)) {
-        return replyTemporaryMessage(message, 'I regret that the mentioned user does not possess the Level 5 role and thus requires no pardon.');
-    }
     
     if (await isUserPardoned(user.id)) { // Add await
         return replyTemporaryMessage(message, 'I regret to inform you that this distinguished member has already been granted clemency for this month\'s requirements.');
@@ -2112,16 +2109,6 @@ async function handlePardonSlashCommand(interaction) {
     }
     
     const user = interaction.options.getUser('user');
-    const member = interaction.guild.members.cache.get(user.id);
-    const roles = getClickableRoleMentions(interaction.guild);
-    
-    if (!member || !hasLevel5Role(member)) {
-        const embed = new EmbedBuilder()
-            .setTitle('Invalid Target')
-            .setDescription(`I regret that the mentioned user does not possess the **Level 5** role and thus requires no pardon.`)
-            .setColor(0xFF9900);
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
     
     if (await isUserPardoned(user.id)) { // Add await
         const embed = new EmbedBuilder()
@@ -2551,7 +2538,6 @@ async function createPurgeListEmbed(guild) {
     
     // Process each member - need to handle async calls
     for (const [userId, member] of allMembers) {
-        if (!hasLevel5Role(member)) continue;
         
         const monthlyCount = await getUserMonthlyFeedback(userId); // Add await
         const isPardoned = await isUserPardoned(userId); // Add await
