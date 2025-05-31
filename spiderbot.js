@@ -2738,8 +2738,8 @@ function createHelpEmbed(guild) {
                 inline: false 
             },
             { 
-                name: '🎭 Lighthearted Tomfoolery (**To avoid spammers/trolls, Level 15 is required**)', 
-                value: '`/faceless` - Make anonymous confessions to the community\n*"The Many-Faced God protects your secrets, dear writer"*', 
+                name: '🎭 Lighthearted Tomfoolery', 
+                value: '`/faceless` - Make anonymous confessions to the community\n*"The Many-Faced God protects your secrets, dear writer"*\n**Note:** To avoid spammers/trolls, Level 15 is required', 
                 inline: false 
             },
             { 
