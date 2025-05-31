@@ -2894,12 +2894,10 @@ async function handleFacelessSlashCommand(interaction) {
         "The House of Black and White keeps all truths.",
         "Valar morghulis - all men must die, but secrets live forever.",
         "A girl knows many things, but speaks none of them.",
-        "The Faceless Ones guard your words as they guard their own.",
         "In Braavos, even the stones keep secrets.",
         "Death comes for all, but anonymity comes for the wise.",
         "A confession without a face is a truth without consequence.",
         "The Many-Faced God smiles upon honest words spoken in shadow.",
-        "What is dead may never die, but what is secret may never be revealed.",
         "A man speaks truth when a man has no name to protect.",
         "The gift of anonymity is more precious than the gift of death."
     ];
