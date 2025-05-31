@@ -673,12 +673,22 @@ async function isUserPardoned(userId) {
 
 async function pardonUser(userId) {
     const monthKey = getCurrentMonthKey();
-    await global.db.pardonUser(userId, monthKey);
+    try {
+        await global.db.db.run('INSERT OR REPLACE INTO pardoned_users (user_id, month_key) VALUES (?, ?)', [userId, monthKey]);
+    } catch (error) {
+        console.error('Error pardoning user:', error);
+    }
 }
 
 async function removePardon(userId) {
     const monthKey = getCurrentMonthKey();
-    return await global.db.removePardon(userId, monthKey);
+    try {
+        const result = await global.db.db.run('DELETE FROM pardoned_users WHERE user_id = ? AND month_key = ?', [userId, monthKey]);
+        return result.changes > 0;
+    } catch (error) {
+        console.error('Error removing pardon:', error);
+        return false;
+    }
 }
 
 // ===== USER RESET FUNCTION =====
@@ -2226,41 +2236,36 @@ async function handleUnpardonSlashCommand(interaction) {
     }
     
     const user = interaction.options.getUser('user');
-    const member = interaction.guild.members.cache.get(user.id);
     
-    if (!member || !hasLevel5Role(member)) {
-        const embed = new EmbedBuilder()
-            .setTitle('Invalid Target')
-            .setDescription(`I regret that the mentioned user does not possess the **Level 5** role and thus has no pardon to revoke.`)
-            .setColor(0xFF9900);
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
-    
-    if (!(await isUserPardoned(user.id))) {
-        const embed = new EmbedBuilder()
-            .setTitle('No Pardon Found ☝️')
-            .setDescription('I regret to inform you that this member currently holds no pardon for this month\'s requirements.')
-            .setColor(0xFF9900);
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
-    
-    const removed = await removePardon(user.id);
-    if (removed) {
+    try {
+        // Check if user is actually pardoned first
+        const isPardoned = await isUserPardoned(user.id);
+        
+        if (!isPardoned) {
+            const embed = new EmbedBuilder()
+                .setTitle('No Pardon Found ☝️')
+                .setDescription('This member currently holds no pardon for this month\'s requirements.')
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        }
+        
+        // Remove the pardon using the same method that adds it
+        const monthKey = getCurrentMonthKey();
+        await global.db.db.run('DELETE FROM pardoned_users WHERE user_id = ? AND month_key = ?', [user.id, monthKey]);
+        
         const embed = new EmbedBuilder()
             .setTitle('Pardon Revoked ☝️')
-            .setDescription(`The clemency previously granted to **${user.displayName}** has been rescinded. They must now meet the monthly feedback requirement or face purging.`)
-            .addFields(
-                { name: 'Member', value: `${user.displayName}`, inline: true },
-                { name: 'Current Status', value: 'Must meet monthly requirement', inline: true },
-                { name: 'Monthly Requirement', value: `${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: true }
-            )
+            .setDescription(`The clemency previously granted to **${user.displayName}** has been rescinded.`)
             .setColor(0xFF6B6B);
         
         await replyTemporary(interaction, { embeds: [embed] });
-    } else {
+        
+    } catch (error) {
+        console.error('Full unpardon error:', error);
         const embed = new EmbedBuilder()
-            .setTitle('Revocation Failed')
-            .setDescription('An unexpected complication arose while attempting to revoke the pardon.')
+            .setTitle('Error')
+            .setDescription(`Error details: ${error.message}`)
             .setColor(0xFF6B6B);
         
         await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -2479,15 +2484,13 @@ async function createStatsEmbed(guild) {
         const isPardoned = await isUserPardoned(userId);
         const status = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅' : '❌';
         
+        // FIXED LOGIC: Check requirement first, then pardon
         if (monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT) {
             monthlyContributors++;
-        }
-        
-        if (isPardoned) {
+            fulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
+        } else if (isPardoned) {
             pardonedCount++;
             pardonedList += `${status} **${member.displayName}** (${monthlyCount}) - *Pardoned*\n`;
-        } else if (monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT) {
-            fulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
         } else {
             nonFulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
         }
