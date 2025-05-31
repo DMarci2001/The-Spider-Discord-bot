@@ -2622,7 +2622,7 @@ async function createPurgeListEmbed(guild) {
         .addFields(
             { name: `🔥 To be Purged (${purgeCount})`, value: purgeList, inline: false },
             { name: `🛡️ Pardoned from Purge (${pardonedCount})`, value: pardonedList, inline: false },
-            { name: 'Notes', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}\n• **Only **Level 5** members** are subject to purging`, inline: false }
+            { name: 'Notes', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: false }
         )
         .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
     
