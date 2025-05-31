@@ -2559,20 +2559,8 @@ async function createPurgeListEmbed(guild) {
         }
     }
     
-    // Truncate lists if too long
-    if (purgeList.length > 700) {
-        purgeList = purgeList.substring(0, 650);
-    }
-    if (pardonedList.length > 200) {
-        pardonedList = pardonedList.substring(0, 150) + '...\n*(List truncated)*';
-    }
-    if (protectedList.length > 200) {
-        protectedList = protectedList.substring(0, 150) + '...\n*(List truncated)*';
-    }
-    
     if (!purgeList) purgeList = '• No members would be purged this month';
     if (!pardonedList) pardonedList = '• No pardoned members this month';
-    if (!protectedList) protectedList = '• No protected staff members found';
     
     const embed = new EmbedBuilder()
         .setTitle('Monthly Purge List ☝️')
