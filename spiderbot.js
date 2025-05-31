@@ -414,7 +414,9 @@ function hasLevel15Role(member) {
 
 function getCurrentMonthKey() {
     const now = new Date();
-    return `${now.getFullYear()}-${now.getMonth()}`;
+    // Subtract 1 day to shift the month boundary from 1st to 2nd
+    const adjustedDate = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+    return `${adjustedDate.getFullYear()}-${adjustedDate.getMonth()}`;
 }
 
 async function getUserMonthlyFeedback(userId) {
@@ -600,9 +602,9 @@ async function getBookshelfAccessStatus(userId, member = null, guild = null) {
     
     if (user.purchases.includes('shelf')) {
         if (member && hasReaderRole(member)) {
-            return '✅ Full bookshelf access granted';
+            return '✅ Full access granted';
         } else {
-            return `✅ Shelf Owner role acquired - ${roles.reader} role needed from staff`;
+            return `✅ ${roles.shelfOwner} role acquired - ${roles.reader} role needed from staff`;
         }
     } else if (user.totalFeedbackAllTime < 1) {
         return `📝 Need 1 more credit to qualify for bookshelf purchase`;
@@ -2894,14 +2896,10 @@ async function handleFacelessSlashCommand(interaction) {
         "The House of Black and White keeps all truths.",
         "Valar morghulis - all men must die, but secrets live forever.",
         "A girl knows many things, but speaks none of them.",
-        "The Faceless Ones guard your words as they guard their own.",
         "In Braavos, even the stones keep secrets.",
-        "Death comes for all, but anonymity comes for the wise.",
         "A confession without a face is a truth without consequence.",
         "The Many-Faced God smiles upon honest words spoken in shadow.",
-        "What is dead may never die, but what is secret may never be revealed.",
-        "A man speaks truth when a man has no name to protect.",
-        "The gift of anonymity is more precious than the gift of death."
+        "A man speaks truth when a man has no name to protect."
     ];
     
     // Select random postscript
