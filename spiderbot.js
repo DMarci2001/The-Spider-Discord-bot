@@ -662,8 +662,13 @@ async function logFeedbackForMessage(messageId, userId) {
 
 // ===== PARDON SYSTEM FUNCTIONS =====
 async function isUserPardoned(userId) {
-    const monthKey = getCurrentMonthKey();
-    return await global.db.isUserPardoned(userId, monthKey);
+    try {
+        const monthKey = getCurrentMonthKey();
+        const result = await global.db.db.get('SELECT 1 FROM pardoned_users WHERE user_id = ? AND month_key = ?', [userId, monthKey]);
+        return !!result;
+    } catch (error) {
+        return false;
+    }
 }
 
 async function pardonUser(userId) {
@@ -2288,7 +2293,6 @@ async function handleManualPurgeSlashCommand(interaction) {
 
 // Helper function to check if member should be protected from purge
 function isProtectedFromPurge(member) {
-    // Protect members with staff permissions
     if (member.permissions.has(PermissionFlagsBits.ManageMessages) ||
         member.permissions.has(PermissionFlagsBits.ManageRoles) ||
         member.permissions.has(PermissionFlagsBits.ManageGuild) ||
@@ -2296,15 +2300,12 @@ function isProtectedFromPurge(member) {
         return true;
     }
     
-    // Protect members with specific staff roles (customize these role names as needed)
     const protectedRoles = ['Admin', 'Moderator', 'Staff', 'Owner', 'Bot Manager'];
-    const hasProtectedRole = member.roles.cache.some(role => 
+    return member.roles.cache.some(role => 
         protectedRoles.some(protectedRole => 
             role.name.toLowerCase().includes(protectedRole.toLowerCase())
         )
     );
-    
-    return hasProtectedRole;
 }
 
 async function performManualPurge(guild) {
@@ -2629,29 +2630,36 @@ async function createPurgeListEmbed(guild) {
     
     // Process each member - need to handle async calls
     for (const [userId, member] of allMembers) {
-        
-        const monthlyCount = await getUserMonthlyFeedback(userId); // Add await
-        const isPardoned = await isUserPardoned(userId); // Add await
-        const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
-        const isProtected = isProtectedFromPurge(member);
-        
-        if (!meetingRequirement && !isPardoned && !isProtected) {
-            // Would be purged
-            purgeCount++;
-            purgeList += `❌ **${member.displayName}** (${monthlyCount} credits)\n`;
-        } else if (!meetingRequirement && isPardoned) {
-            // Pardoned from purge
-            pardonedCount++;
-            pardonedList += `✅ **${member.displayName}** (${monthlyCount} credits)\n`;
-        } else if (!meetingRequirement && isProtected) {
-            // Protected from purge
-            protectedCount++;
-            protectedList += `🛡️ **${member.displayName}** (${monthlyCount} credits) - Staff\n`;
+        try {
+            const monthlyCount = await getUserMonthlyFeedback(userId);
+            const isPardoned = await isUserPardoned(userId);
+            const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
+            const isProtected = isProtectedFromPurge(member);
+            
+            if (!meetingRequirement && !isPardoned && !isProtected) {
+                // Would be purged
+                purgeCount++;
+                if (purgeList.length < 900) { // Leave room for truncation message
+                    purgeList += `❌ **${member.displayName}** (${monthlyCount} credits)\n`;
+                }
+            } else if (!meetingRequirement && isPardoned) {
+                // Pardoned from purge
+                pardonedCount++;
+                if (pardonedList.length < 900) { // Leave room for truncation message
+                    pardonedList += `✅ **${member.displayName}** (${monthlyCount} credits)\n`;
+                }
+            } else if (!meetingRequirement && isProtected) {
+                // Protected from purge
+                protectedCount++;
+                if (protectedList.length < 900) { // Leave room for truncation message
+                    protectedList += `🛡️ **${member.displayName}** (${monthlyCount} credits) - Staff\n`;
+                }
+            }
+        } catch (error) {
+            console.error(`Error processing member ${member.displayName}:`, error);
+            continue; // Skip this member and continue with others
         }
     }
-    
-    if (!purgeList) purgeList = '• No members would be purged this month';
-    if (!pardonedList) pardonedList = '• No pardoned members this month';
     
     const embed = new EmbedBuilder()
         .setTitle('Monthly Purge List ☝️')
