@@ -180,6 +180,10 @@ async function handleFacelessSlashCommand(interaction) {
 3. The bot could ask for members' birthdays(optional) and then on the day, he would say that his little birds have whispered
 it was the members' birthday, so everyone could wish them happy birthday.
 
+Version 18:
+
+1. Fix the unpardon command
+
 In the code:
 
 
