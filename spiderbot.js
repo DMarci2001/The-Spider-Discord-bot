@@ -385,6 +385,25 @@ function getClickableRoleMentions(guild) {
 }
 
 // ===== UTILITY FUNCTIONS =====
+
+function hasLevel15Role(member) {
+    if (!member?.roles?.cache) {
+        console.log('Invalid member object');
+        return false;
+    }
+    
+    const hasRole = member.roles.cache.some(role => {
+        if (role.name.startsWith('Level ')) {
+            const level = parseInt(role.name.split(' ')[1]);
+            return level >= 15;
+        }
+        return false;
+    });
+    
+    console.log(`${member.displayName} has Level 15+ role:`, hasRole);
+    return hasRole;
+}
+
 function getCurrentMonthKey() {
     const now = new Date();
     return `${now.getFullYear()}-${now.getMonth()}`;
@@ -2719,7 +2738,7 @@ function createHelpEmbed(guild) {
                 inline: false 
             },
             { 
-                name: '🎭 Lighthearted Tomfoolery', 
+                name: '🎭 Lighthearted Tomfoolery (**To avoid spammers/trolls, Level 15 is required**)', 
                 value: '`/faceless` - Make anonymous confessions to the community\n*"The Many-Faced God protects your secrets, dear writer"*', 
                 inline: false 
             },
@@ -2825,8 +2844,23 @@ async function handleFacelessSlashCommand(interaction) {
     const userId = interaction.user.id;
     const confession = interaction.options.getString('confession');
     
+    // Check if user has Level 15 role - ADD THIS SECTION
+    if (!hasLevel15Role(interaction.member)) {
+        const embed = new EmbedBuilder()
+            .setTitle(`**Level 15** Required ☝️`)
+            .setDescription('The Many-Faced God only speaks with those who have proven their dedication to our literary realm.')
+            .addFields({
+                name: 'How to Gain Access',
+                value: `Continue participating in the server activities and earning experience to reach **Level 15** status.`,
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
     // Check cooldown first
     const cooldownStatus = isOnFacelessCooldown(userId);
+    
     if (cooldownStatus.onCooldown) {
         const minutes = Math.floor(cooldownStatus.timeRemaining / 60);
         const seconds = cooldownStatus.timeRemaining % 60;
