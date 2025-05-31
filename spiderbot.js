@@ -2420,7 +2420,7 @@ async function createStatsEmbed(guild) {
     let pardonedList = '';
     let pardonedCount = 0;
     
-    // Process each Level 5 member
+    // Process each member
     level5Members.forEach((member, userId) => {
         const monthlyCount = getUserMonthlyFeedback(userId);
         const isPardoned = isUserPardoned(userId);
@@ -2578,10 +2578,9 @@ async function createPurgeListEmbed(guild) {
     let pardonedCount = 0;
     let protectedCount = 0;
     
-    // Process each Level 5 member
+    // Process each member
     allMembers.forEach((member, userId) => {
-        if (!hasLevel5Role(member)) return;
-        
+
         const monthlyCount = getUserMonthlyFeedback(userId);
         const isPardoned = isUserPardoned(userId);
         const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
