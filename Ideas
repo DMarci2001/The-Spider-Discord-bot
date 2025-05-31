@@ -9,3 +9,7 @@ and getting feedback.
 
 -Achievements
 
+-Implement commands to filter the bookshelf according to genre over time, and other search functionality.
+
+-Consider moving the date to a database from .json.
+
