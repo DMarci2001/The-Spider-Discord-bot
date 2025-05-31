@@ -921,13 +921,13 @@ const commands = [
     
     new SlashCommandBuilder()
         .setName('pardon')
-        .setDescription('Pardon a Level 5 member from monthly feedback requirement (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('Level 5 member to pardon from this month\'s requirement').setRequired(true)),
+        .setDescription('Pardon a member from monthly feedback requirement (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('Member to pardon from this month\'s requirement').setRequired(true)),
     
     new SlashCommandBuilder()
         .setName('unpardon')
-        .setDescription('Remove pardon from a Level 5 member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('Level 5 member to remove pardon from').setRequired(true)),
+        .setDescription('Remove pardon from a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('Member to remove pardon from').setRequired(true)),
     
     new SlashCommandBuilder()
         .setName('setup_bookshelf')
@@ -936,11 +936,11 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName('purge_list')
-        .setDescription('View all Level 5 members who would be purged for not meeting monthly requirements (Staff only)'),
+        .setDescription('View all mebmers who would be purged for not meeting monthly requirements (Staff only)'),
     
     new SlashCommandBuilder()
         .setName('manual_purge')
-        .setDescription('Manually purge all Level 5 members who don\'t meet monthly requirements (Staff only)'),
+        .setDescription('Manually purge all members who don\'t meet monthly requirements (Staff only)'),
 
     new SlashCommandBuilder()
     .setName('post_server_guide')
@@ -1051,7 +1051,7 @@ client.on('threadCreate', async (thread) => {
                     const embed = new EmbedBuilder()
                         .setTitle('Bookshelf Thread Removed ☝️')
                         .addFields(
-                            { name: 'Requirements to Create Bookshelf Threads', value: `• ${roles.shelfOwner} role (purchasable with 1 credit via \`/buy shelf\`)\n• ${roles.reader} role (assigned by staff based on feedback quality)`, inline: false },
+                            { name: 'Requirements to Create Bookshelf Threads', value: `• **Shelf Owner** role (purchasable with 1 credit via \`/buy shelf\`)\n• **reader** role (assigned by staff based on feedback quality)`, inline: false },
                             { name: 'Your Current Status', value: `• Shelf Owner: ${hasShelfRole(member) ? '✅' : '❌'}\n• reader: ${hasReaderRole(member) ? '✅' : '❌'}`, inline: false },
                             { name: 'How to Gain Access', value: `1. Give feedback to fellow writers and log it with \`/feedback\`\n2. Purchase shelf access with \`/buy shelf\`\n3. Staff will review your feedback quality and assign you the ${roles.reader} role if your feedback is sufficient\n4. Once you have both roles, you can create ${channels.bookshelf} threads`, inline: false }
                         )
@@ -2195,7 +2195,7 @@ async function handlePardonCommand(message, args) {
     }
     
     const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the Level 5 member you wish to pardon from this month\'s feedback requirement.');
+    if (!user) return replyTemporaryMessage(message, 'Pray, mention the member you wish to pardon from this month\'s feedback requirement.');
     
     const member = message.guild.members.cache.get(user.id);
     
@@ -2699,7 +2699,7 @@ function createAllCommandsEmbed() {
             },
             { 
                 name: '👑 Server Administration', 
-                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Grant bookshelf access to a member\n`/pardon` - Pardon a Level 5 member from monthly feedback requirement\n`/unpardon` - Remove pardon from a Level 5 member\n`/purge_list` - View all Level 5 members who would be purged\n`/manual_purge` - Execute manual purge of all qualifying members', 
+                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Grant bookshelf access to a member\n`/pardon` - Pardon a member from monthly feedback requirement\n`/unpardon` - Remove pardon from a member\n`/purge_list` - View all members who would be purged\n`/manual_purge` - Execute manual purge of all qualifying members', 
                 inline: false 
             }
         )
