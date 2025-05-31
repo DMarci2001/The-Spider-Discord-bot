@@ -1333,7 +1333,7 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
                 value: `Continue participating in the server activities and earning experience to reach **Level 5** status.`,
                 inline: false
             })
-            .setColor(0xFF9900);
+            .setColor(0xFF8C00);
         
         if (isSlash) {
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -1454,7 +1454,6 @@ async function createBalanceEmbed(user, member, guild) {
     const monthlyQuotaStatus = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅ Graciously fulfilled' : '❌ Unfulfilled';
     
     return new EmbedBuilder()
-        .setTitle(`${user.displayName}'s Balance ☝️`)
         .addFields(
             { name: 'Total Credits', value: `📝 ${userRecord.totalFeedbackAllTime}`, inline: true },
             { name: 'Monthly Credits', value: `📅 ${monthlyCount}`, inline: true },
@@ -1463,7 +1462,7 @@ async function createBalanceEmbed(user, member, guild) {
             { name: 'Monthly Quota', value: `${monthlyQuotaStatus}`, inline: true },
             { name: 'Bookshelf Status', value: await getBookshelfAccessStatus(userId, member, guild), inline: true } // Add await
         )
-        .setColor(await canPostInBookshelf(userId, member) ? 0x00AA55 : 0xFF9900); // Add await
+        .setColor(0xFF8C00) // Add await
 }
 
 // ===== HALL OF FAME COMMANDS =====
@@ -1534,7 +1533,7 @@ function createStoreEmbed(guild) {
             { name: '📝 Chapter Lease', value: `Allows you to post one message in your bookshelf thread\n**Price:** ${STORE_ITEMS.lease.price} credit each\n**Note:** You can buy multiple leases at once by specifying quantity\n**Special Content:** Contact staff via ticket for free leases when posting maps, artwork, or other non-chapter content`, inline: false },
             { name: 'How to Purchase', value: `• \`/buy shelf\` - Purchase bookshelf access\n• \`/buy lease\` - Purchase 1 chapter lease\n• \`/buy lease quantity:5\` - Purchase 5 chapter leases`, inline: false }
         )
-        .setColor(0x2F3136)
+        .setColor(0xFF8C00)
         .setFooter({ text: 'All purchases support our thriving literary community.' });
 }
 
@@ -1927,7 +1926,7 @@ async function createFeedbackModificationEmbed(user, amount, action) {
             .addFields(
                 { name: 'Feedback(s) Added!', value: `+${amount}`, inline: false }
             )
-            .setColor(0x00AA55);
+            .setColor(0xFF8C00);
     } else {
         return new EmbedBuilder()
             .addFields(
@@ -2513,7 +2512,6 @@ async function createStatsEmbed(guild) {
     
     const embed = new EmbedBuilder()
         .setTitle('Type&Draft Community Statistics ☝️')
-        .setDescription('Allow me to present the current state of our literary realm, as observed from my position of humble service.')
         .addFields(
             { name: 'Total Writers in Our Halls', value: `${totalMembers} souls`, inline: true },
             { name: 'Members Tracked', value: `${totalLevel5} writers`, inline: true },
