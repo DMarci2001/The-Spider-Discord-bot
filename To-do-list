@@ -76,6 +76,8 @@ Version 6:
 
 Version 16:
 
+1.
+
 // ===== CUSTOMIZABLE FUN COMMANDS =====
 
 async function handleBurnSlashCommand(interaction) {
@@ -172,6 +174,11 @@ async function handleFacelessSlashCommand(interaction) {
         await interaction.reply({ embeds: [embed] });
     }
 }
+
+2. Implement Klaus's pigeon pie /klaus_wanted_pizza, maybe with a posted gif, a scene of Joffrey's pie, or something.
+
+3. The bot could ask for members' birthdays(optional) and then on the day, he would say that his little birds have whispered
+it was the members' birthday, so everyone could wish them happy birthday.
 
 In the code:
 
