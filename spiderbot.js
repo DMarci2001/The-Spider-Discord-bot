@@ -2603,7 +2603,7 @@ async function createPurgeListEmbed(guild) {
     
     // Truncate lists if too long
     if (purgeList.length > 700) {
-        purgeList = purgeList.substring(0, 650) + '...\n*(List truncated)*';
+        purgeList = purgeList.substring(0, 650);
     }
     if (pardonedList.length > 200) {
         pardonedList = pardonedList.substring(0, 150) + '...\n*(List truncated)*';
