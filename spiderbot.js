@@ -910,7 +910,12 @@ const commands = [
 
     new SlashCommandBuilder()
     .setName('post_rules')
-    .setDescription('Post the server rules (Staff only)')
+    .setDescription('Post the server rules (Staff only)'),
+
+    new SlashCommandBuilder()
+        .setName('faceless')
+        .setDescription('Make an anonymous confession to the community')
+        .addStringOption(option => option.setName('confession').setDescription('Your writing confession').setRequired(true))
 ];
 
 async function registerCommands() {
@@ -937,11 +942,17 @@ client.once('ready', async () => {
     for (const guild of client.guilds.cache.values()) {
         try {
             await guild.members.fetch();
-            console.log(`Fetched ${guild.members.cache.size} members for ${guild.name}`);
+            await guild.roles.fetch();
+            console.log(`Fetched ${guild.members.cache.size} members and ${guild.roles.cache.size} roles for ${guild.name}`);
         } catch (error) {
-            console.error(`Failed to fetch members for ${guild.name}:`, error);
+            console.error(`Failed to fetch data for ${guild.name}:`, error);
         }
     }
+    
+    // Fix channel permissions for slash commands
+    await fixChannelPermissions();
+    
+    console.log('🎭 Bot fully initialized. All commands should work everywhere!');
 });
 
 client.on('guildMemberRemove', async (member) => {
@@ -1189,7 +1200,8 @@ async function handleSlashCommand(interaction) {
         purge_list: () => handlePurgeListSlashCommand(interaction),
         manual_purge: () => handleManualPurgeSlashCommand(interaction),
         post_server_guide: () => handlePostServerGuideSlashCommand(interaction),
-        post_rules: () => handlePostRulesSlashCommand(interaction)
+        post_rules: () => handlePostRulesSlashCommand(interaction),
+        faceless: () => handleFacelessSlashCommand(interaction)
     };
     
     const handler = commandHandlers[interaction.commandName];
@@ -2677,7 +2689,7 @@ function createHelpEmbed(guild) {
         .setTitle('Essential Commands at Your Service ☝️')
         .addFields(
             { 
-                name: `📝 Earning Feedback Credits (**Level 5** Required)`, 
+                name: `📝 Earning Feedback Credits (${roles.level5} Required)`, 
                 value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful feedback\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback!`, 
                 inline: false 
             },
@@ -2694,6 +2706,11 @@ function createHelpEmbed(guild) {
             { 
                 name: '✍️ Chapter Posting', 
                 value: 'After gaining bookshelf access:\n1. Purchase chapter leases with `/buy lease` (1 credit each)\n2. Create your thread in the bookshelf forum\n3. Each chapter/short story you post will automatically consume one lease\n4. Contact staff via ticket for free leases when posting maps, artwork, or special content', 
+                inline: false 
+            },
+            { 
+                name: '🎭 Lighthearted Tomfoolery', 
+                value: '`/faceless` - Make anonymous confessions to the community\n*"The Many-Faced God protects your secrets, dear writer"*', 
                 inline: false 
             },
             { 
@@ -2755,6 +2772,63 @@ async function sendStaffOnlyMessage(target, isInteraction = false) {
     } else {
         return await replyTemporaryMessage(target, { embeds: [embed] });
     }
+}
+
+// ===== FACELESS COMMAND =====
+// ===== FACELESS COMMAND =====
+async function handleFacelessSlashCommand(interaction) {
+    const confession = interaction.options.getString('confession');
+    
+    // Don't allow in forum channels
+    if (interaction.channel.isThread() && interaction.channel.parent && 
+        (interaction.channel.parent.type === 15)) { // Forum channel
+        const embed = new EmbedBuilder()
+            .setTitle('Chamber Unsuitable ☝️')
+            .setDescription('The Many-Faced God does not whisper secrets in the formal halls. Seek a more... casual venue.')
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true }, 8000);
+    }
+    
+    // Array of Faceless Men themed postscripts
+    const facelessPostscripts = [
+        "A writer has no name, but has many secrets.",
+        "The Many-Faced God hears all confessions.",
+        "What is written in shadow need not burden the light.",
+        "A secret shared is a burden halved, a name forgotten.",
+        "The House of Black and White keeps all truths.",
+        "Valar morghulis - all men must die, but secrets live forever.",
+        "A girl knows many things, but speaks none of them.",
+        "In Braavos, even the stones keep secrets.",
+        "A confession without a face is a truth without consequence.",
+        "The Many-Faced God smiles upon honest words spoken in shadow.",
+        "A man speaks truth when a man has no name to protect.",
+    ];
+    
+    // Select random postscript
+    const randomPostscript = facelessPostscripts[Math.floor(Math.random() * facelessPostscripts.length)];
+    
+    // Create the confession embed
+    const confessionEmbed = new EmbedBuilder()
+        .setTitle('🎭 Anonymous Confession 🎭')
+        .setDescription(`*"${confession}"*`)
+        .setColor(0x000000)
+        .setFooter({ text: randomPostscript })
+        .setTimestamp();
+    
+    // Send anonymous confession immediately to channel
+    await interaction.channel.send({ embeds: [confessionEmbed] });
+    
+    // Send ephemeral confirmation (only user sees this)
+    const confirmEmbed = new EmbedBuilder()
+        .setTitle('🎭 Confession Delivered')
+        .setDescription('Your words have been whispered to the shadows. No trace remains.')
+        .setColor(0x2F4F4F);
+    
+    await interaction.reply({ embeds: [confirmEmbed], ephemeral: true });
+    
+    // Minimal logging (no confession content)
+    console.log(`Anonymous confession posted in #${interaction.channel.name}`);
 }
 
 // ===== BOT LOGIN =====
