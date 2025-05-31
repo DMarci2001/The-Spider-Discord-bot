@@ -11,5 +11,7 @@ and getting feedback.
 
 -Implement commands to filter the bookshelf according to genre over time, and other search functionality.
 
--Consider moving the date to a database from .json.
+-Purge immunity from level 15 onwards
+
+
 
