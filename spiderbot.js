@@ -451,28 +451,77 @@ function hasShelfRole(member) {
     return member.roles.cache.some(role => role.name === 'Shelf Owner');
 }
 
+// Alternative getUserData function - try this instead
+// REVERT to this - don't use my broken version
 async function getUserData(userId) {
-    const user = await global.db.getUser(userId);
-    const purchases = await global.db.getUserPurchases(userId);
-    
-    return {
-        totalFeedbackAllTime: user.total_feedback_all_time,
-        currentCredits: user.current_credits,
-        bookshelfPosts: user.bookshelf_posts,
-        chapterLeases: user.chapter_leases,
-        purchases: purchases
-    };
+    try {
+        const userRecord = await global.db.db.get('SELECT * FROM users WHERE user_id = ?', [userId]);
+        const purchaseRecords = await global.db.db.all('SELECT item FROM user_purchases WHERE user_id = ?', [userId]);
+        const purchases = purchaseRecords ? purchaseRecords.map(p => p.item) : [];
+        
+        if (!userRecord) {
+            return {
+                totalFeedbackAllTime: 0,
+                currentCredits: 0,
+                bookshelfPosts: 0,
+                chapterLeases: 0,
+                purchases: []
+            };
+        }
+        
+        return {
+            totalFeedbackAllTime: userRecord.total_feedback_all_time || 0,
+            currentCredits: userRecord.current_credits || 0,
+            bookshelfPosts: userRecord.bookshelf_posts || 0,
+            chapterLeases: userRecord.chapter_leases || 0,
+            purchases: purchases
+        };
+    } catch (error) {
+        return {
+            totalFeedbackAllTime: 0,
+            currentCredits: 0,
+            bookshelfPosts: 0,
+            chapterLeases: 0,
+            purchases: []
+        };
+    }
 }
 
 async function updateUserData(userId, updates) {
-    // Convert camelCase to snake_case for database
-    const dbUpdates = {};
-    if (updates.totalFeedbackAllTime !== undefined) dbUpdates.total_feedback_all_time = updates.totalFeedbackAllTime;
-    if (updates.currentCredits !== undefined) dbUpdates.current_credits = updates.currentCredits;
-    if (updates.bookshelfPosts !== undefined) dbUpdates.bookshelf_posts = updates.bookshelfPosts;
-    if (updates.chapterLeases !== undefined) dbUpdates.chapter_leases = updates.chapterLeases;
+    const fields = [];
+    const values = [];
     
-    await global.db.updateUser(userId, dbUpdates);
+    if (updates.totalFeedbackAllTime !== undefined) {
+        fields.push('total_feedback_all_time = ?');
+        values.push(updates.totalFeedbackAllTime);
+    }
+    if (updates.currentCredits !== undefined) {
+        fields.push('current_credits = ?');
+        values.push(updates.currentCredits);
+    }
+    if (updates.bookshelfPosts !== undefined) {
+        fields.push('bookshelf_posts = ?');
+        values.push(updates.bookshelfPosts);
+    }
+    if (updates.chapterLeases !== undefined) {
+        fields.push('chapter_leases = ?');
+        values.push(updates.chapterLeases);
+    }
+    
+    if (fields.length > 0) {
+        values.push(userId);
+        try {
+            const result = await global.db.db.run(`UPDATE users SET ${fields.join(', ')} WHERE user_id = ?`, values);
+            if (result.changes === 0) {
+                await global.db.db.run(`
+                    INSERT INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
+                    VALUES (?, ?, ?, ?, ?)
+                `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
+            }
+        } catch (error) {
+            // Ignore errors
+        }
+    }
 }
 
 function hasReaderRole(member) {
@@ -534,6 +583,17 @@ async function addLeases(userId, amount) {
     console.log(`Added ${amount} leases to user ${userId}. Total: ${userData.chapterLeases + amount}`);
 }
 
+async function addPurchase(userId, item) {
+    try {
+        await global.db.db.run(
+            'INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)',
+            [userId, item]
+        );
+    } catch (error) {
+        console.error(`Error adding purchase for ${userId}:`, error);
+    }
+}
+
 async function getBookshelfAccessStatus(userId, member = null, guild = null) {
     const user = await getUserData(userId);
     const roles = guild ? getClickableRoleMentions(guild) : { reader: '**reader**' };
@@ -578,12 +638,26 @@ function hasStaffPermissions(member) {
     return member?.permissions?.has(PermissionFlagsBits.ManageMessages);
 }
 
-async function hasUserLoggedFeedbackForMessage(messageId, userId) {
-    return await global.db.hasLoggedFeedback(messageId, userId);
+async function logFeedbackForMessage(messageId, userId) {
+    try {
+        await global.db.db.run(
+            'INSERT OR REPLACE INTO logged_feedback (message_id, user_id) VALUES (?, ?)',
+            [messageId, userId]
+        );
+    } catch (error) {
+        console.error('Error logging feedback:', error);
+    }
 }
 
 async function logFeedbackForMessage(messageId, userId) {
-    await global.db.logFeedback(messageId, userId);
+    try {
+        await global.db.db.run(
+            'INSERT OR REPLACE INTO logged_feedback (message_id, user_id) VALUES (?, ?)',
+            [messageId, userId]
+        );
+    } catch (error) {
+        console.error('Error logging feedback:', error);
+    }
 }
 
 // ===== PARDON SYSTEM FUNCTIONS =====
@@ -869,7 +943,7 @@ const commands = [
 
 async function registerCommands() {
     try {
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT2_TOKEN);
         console.log('Started refreshing application (/) commands.');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('Successfully reloaded application (/) commands.');
@@ -1193,6 +1267,23 @@ async function handleSlashCommand(interaction) {
 }
 
 // ===== FEEDBACK COMMANDS =====
+
+async function logFeedbackForMessage(messageId, userId) {
+    try {
+        await global.db.db.run('INSERT OR REPLACE INTO logged_feedback (message_id, user_id) VALUES (?, ?)', [messageId, userId]);
+    } catch (error) {
+        // Ignore errors
+    }
+}
+
+async function hasUserLoggedFeedbackForMessage(messageId, userId) {
+    try {
+        const result = await global.db.db.get('SELECT 1 FROM logged_feedback WHERE message_id = ? AND user_id = ?', [messageId, userId]);
+        return !!result;
+    } catch (error) {
+        return false;
+    }
+}
 async function handleFeedbackCommand(message) {
     console.log(`Processing !feedback command for ${message.author.displayName}`);
     return await processFeedbackCommand(message.author, message.member, message.channel, false, null, message);
@@ -1473,7 +1564,7 @@ async function processPurchase(userId, itemKey, quantity, member, guild) {
     
     if (await spendCredits(userId, totalCost)) {
         if (itemKey === 'shelf') {
-            await global.db.addPurchase(userId, itemKey);
+            await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
             if (item.role) {
                 await assignPurchaseRoles(member, guild, itemKey);
             }
@@ -2853,7 +2944,7 @@ async function handleFacelessSlashCommand(interaction) {
 }
 
 // ===== BOT LOGIN =====
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login(process.env.DISCORD_BOT2_TOKEN);
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
