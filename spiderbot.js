@@ -687,17 +687,6 @@ async function pardonUser(userId) {
     }
 }
 
-async function removePardon(userId) {
-    const monthKey = getCurrentMonthKey();
-    try {
-        const result = await global.db.db.run('DELETE FROM pardoned_users WHERE user_id = ? AND month_key = ?', [userId, monthKey]);
-        return result.changes > 0;
-    } catch (error) {
-        console.error('Error removing pardon:', error);
-        return false;
-    }
-}
-
 // ===== USER RESET FUNCTION =====
 async function resetUserProgress(userId, guild) {
     console.log(`Resetting all progress for user ${userId}`);
@@ -1929,13 +1918,13 @@ async function createFeedbackModificationEmbed(user, amount, action) {
     if (action === 'added') {
         return new EmbedBuilder()
             .addFields(
-                { name: 'Feedback(s) Added!', value: `+${amount}`, inline: false }
+                { name: 'Feedback(s) Added ☝️', value: `+${amount}`, inline: false }
             )
-            .setColor(0xFF8C00);
+            .setColor(0x00AA55);
     } else {
         return new EmbedBuilder()
             .addFields(
-                { name: 'Credit(s) Removed ☝️', value: `-${amount}`, inline: false }
+                { name: 'Feedback(s) Removed ☝️', value: `-${amount}`, inline: false }
             )
             .setColor(0xFF6B6B);
     }
