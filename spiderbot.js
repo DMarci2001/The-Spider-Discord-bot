@@ -254,7 +254,7 @@ class WelcomeSystem {
 
         const embed = new EmbedBuilder()
             .setTitle('A New Bird Joins Our Literary Nest ☝️')
-            .setDescription(`Ah, ${member}... How delightful. Another soul seeks to join our most distinguished gathering of scribes and storytellers. I confess, your arrival brings me considerable pleasure. Welcome, welcome indeed, to Type&Draft, where words are currency and wisdom flows like wine. Please, after you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel}, use the ${channels.botStuff} channel, and trigger the \`/help\` command for instructions on server mechanics.`)
+            .setDescription(`Ah, **${member.displayName}**... How delightful. Another soul seeks to join our distinguished gathering of scribes and storytellers. Please, after you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel}, use the ${channels.botStuff} channel, and trigger the \`/help\` command for  further instructions!`)
             .setColor(config.color);
 
         if (config.thumbnail) {
@@ -515,13 +515,18 @@ async function updateUserData(userId, updates) {
         try {
             const result = await global.db.db.run(`UPDATE users SET ${fields.join(', ')} WHERE user_id = ?`, values);
             if (result.changes === 0) {
+                // User doesn't exist, create them
                 await global.db.db.run(`
                     INSERT INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
                     VALUES (?, ?, ?, ?, ?)
                 `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
             }
         } catch (error) {
-            // Ignore errors
+            // If insert fails, try a simpler approach
+            await global.db.db.run(`
+                INSERT OR REPLACE INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
+                VALUES (?, ?, ?, ?, ?)
+            `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
         }
     }
 }
