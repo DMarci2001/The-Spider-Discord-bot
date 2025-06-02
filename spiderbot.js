@@ -2303,31 +2303,25 @@ async function handleCreditRemoveSlashCommand(interaction) {
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-async function handleCreditRemoveSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
-    console.log(`Staff removing ${amount} credits from ${user.displayName}'s balance only`);
-    
-    const result = await removeCreditsFromUser(user.id, amount);
-    const embed = createCreditBalanceModificationEmbed(user, amount, result, 'removed');
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
 async function addCreditsToUser(userId, amount) {
     const userRecord = await getUserData(userId);
     const previousCredits = userRecord.currentCredits;
     
     console.log(`Adding ${amount} credits to user ${userId} balance only. Previous: ${previousCredits}`);
     
-    await updateUserData(userId, {
-        currentCredits: userRecord.currentCredits + amount
-    });
+    // Use the same pattern as addFeedbackToUser - INSERT OR REPLACE with all values
+    await global.db.db.run(`
+        INSERT OR REPLACE INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
+        VALUES (?, ?, ?, ?, ?)
+    `, [
+        userId, 
+        userRecord.totalFeedbackAllTime,
+        userRecord.currentCredits + amount,
+        userRecord.bookshelfPosts,
+        userRecord.chapterLeases
+    ]);
     
-    console.log(`New credit balance: ${userRecord.currentCredits + amount} (monthly and all-time totals unchanged)`);
+    console.log(`Added ${amount} credits to user ${userId}. New balance: ${userRecord.currentCredits + amount}`);
     
     return { 
         previousCredits, 
@@ -2370,19 +2364,6 @@ function createCreditBalanceModificationEmbed(user, amount, result, action) {
 }
 
 // ===== LEASE MANAGEMENT COMMANDS =====
-async function handleLeaseAddSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
-    console.log(`Staff adding ${amount} leases to ${user.displayName}`);
-    
-    const result = await addLeasesToUser(user.id, amount);
-    const embed = createLeaseModificationEmbed(user, amount, result, 'added');
-    await replyTemporary(interaction, { embeds: [embed] });
-}
 
 async function handleLeaseAddSlashCommand(interaction) {
     if (!hasStaffPermissions(interaction.member)) {
@@ -2427,16 +2408,6 @@ function createLeaseModificationEmbed(user, amount, result, action) {
 }
 
 // ===== FEEDBACK RESET COMMANDS =====
-async function handleFeedbackResetSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const resetData = await performCompleteReset(user.id, interaction.guild);
-    const embed = createResetEmbed(user, resetData, interaction.guild);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
 
 async function handleFeedbackResetSlashCommand(interaction) {
     if (!hasStaffPermissions(interaction.member)) {
@@ -2923,14 +2894,6 @@ function createBookshelfGrantEmbed(user, result, guild) {
 }
 
 // ===== PURGE LIST COMMANDS =====
-async function handlePurgeListSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const embed = await createPurgeListEmbed(interaction.guild);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
 
 async function handlePurgeListSlashCommand(interaction) {
     if (!hasStaffPermissions(interaction.member)) {
