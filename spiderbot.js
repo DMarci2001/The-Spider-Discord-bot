@@ -2716,7 +2716,7 @@ function isProtectedFromPurge(member) {
     const protectedRoles = ['Admin', 'Moderator', 'Staff', 'Owner', 'Bot Manager'];
     return member.roles.cache.some(role => 
         protectedRoles.some(protectedRole => 
-            role.name.toLowerCase().includes(protectedRole.toLowerCase())
+            role.name.toLowerCase() === protectedRole.toLowerCase()
         )
     );
 }
