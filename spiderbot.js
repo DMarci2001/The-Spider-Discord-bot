@@ -60,8 +60,8 @@ const STORE_ITEMS = {
         category: "color",
         levelRequired: 15
     },
-    viva_magenta: {
-        name: "Viva Magenta",
+    magenta: {
+        name: "Magenta",
         description: "A bold, vibrant purple that screams vigor and craziness",
         color: 0xFF00FF,
         price: 1,
@@ -628,18 +628,32 @@ async function updateUserData(userId, updates) {
         try {
             const result = await global.db.db.run(`UPDATE users SET ${fields.join(', ')} WHERE user_id = ?`, values);
             if (result.changes === 0) {
-                // User doesn't exist, create them
+                // User doesn't exist, create them with current data preserved
+                const currentData = await getUserData(userId);
                 await global.db.db.run(`
                     INSERT INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
                     VALUES (?, ?, ?, ?, ?)
-                `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
+                `, [
+                    userId, 
+                    updates.totalFeedbackAllTime !== undefined ? updates.totalFeedbackAllTime : currentData.totalFeedbackAllTime,
+                    updates.currentCredits !== undefined ? updates.currentCredits : currentData.currentCredits,
+                    updates.bookshelfPosts !== undefined ? updates.bookshelfPosts : currentData.bookshelfPosts,
+                    updates.chapterLeases !== undefined ? updates.chapterLeases : currentData.chapterLeases
+                ]);
             }
         } catch (error) {
-            // If insert fails, try a simpler approach
+            // If insert fails, get current data and preserve it
+            const currentData = await getUserData(userId);
             await global.db.db.run(`
                 INSERT OR REPLACE INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
                 VALUES (?, ?, ?, ?, ?)
-            `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
+            `, [
+                userId,
+                updates.totalFeedbackAllTime !== undefined ? updates.totalFeedbackAllTime : currentData.totalFeedbackAllTime,
+                updates.currentCredits !== undefined ? updates.currentCredits : currentData.currentCredits,
+                updates.bookshelfPosts !== undefined ? updates.bookshelfPosts : currentData.bookshelfPosts,
+                updates.chapterLeases !== undefined ? updates.chapterLeases : currentData.chapterLeases
+            ]);
         }
     }
 }
@@ -1017,7 +1031,7 @@ const commands = [
                 // Color roles
                 { name: '🤎 Mocha Mousse (2025) - 1 credit', value: 'mocha_mousse' },
                 { name: '🍑 Peach Fuzz (2024) - 1 credit', value: 'peach_fuzz' },
-                { name: '🔮 Viva Magenta (2023) - 1 credit', value: 'viva_magenta' },
+                { name: '🔮 Magenta (2023) - 1 credit', value: 'magenta' },
                 { name: '💜 Very Peri (2022) - 1 credit', value: 'very_peri' },
                 { name: '💛 Illuminating Yellow (2021) - 1 credit', value: 'illuminating_yellow' },
                 { name: '🐘 Ultimate Gray (2021) - 1 credit', value: 'ultimate_gray' },
@@ -1692,7 +1706,7 @@ function createStoreEmbed(guild) {
         const shortDescs = {
             'mocha_mousse': 'warm brown',
             'peach_fuzz': 'soft peach',
-            'viva_magenta': 'bold purple',
+            'magenta': 'bold purple',
             'very_peri': 'periwinkle blue',
             'illuminating_yellow': 'bright yellow',
             'living_coral': 'orange-pink',
@@ -1720,7 +1734,7 @@ function createStoreEmbed(guild) {
             },
             { 
                 name: '🎨 Color Roles (Level 15 Required, 1 credit each)', 
-                value: colorList, 
+                value: colorList + "\n• **Note:** These are all real colors, each of them the winner of the Pantone Color of the Year award at some point", 
                 inline: false 
             },
             { 
