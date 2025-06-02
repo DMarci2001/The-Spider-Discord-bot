@@ -2002,7 +2002,6 @@ function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
         if (result.reason === 'color_already_active') {
     return new EmbedBuilder()
         .setTitle('Color Currently Active ☝️')
-        .setDescription(`You already have the **${item.name}** color role active, dear writer. Perhaps you'd prefer a different hue from our distinguished palette?`)
         .setColor(0xFF9900);
     }
         
