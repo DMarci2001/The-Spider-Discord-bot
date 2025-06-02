@@ -663,18 +663,20 @@ async function updateUserData(userId, updates) {
         try {
             const result = await global.db.db.run(`UPDATE users SET ${fields.join(', ')} WHERE user_id = ?`, values);
             if (result.changes === 0) {
-                // User doesn't exist, create them
+                // User doesn't exist, create them with only the provided updates
                 await global.db.db.run(`
                     INSERT INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
                     VALUES (?, ?, ?, ?, ?)
-                `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
+                `, [
+                    userId, 
+                    updates.totalFeedbackAllTime || 0, 
+                    updates.currentCredits || 0, 
+                    updates.bookshelfPosts || 0, 
+                    updates.chapterLeases || 0
+                ]);
             }
         } catch (error) {
-            // If insert fails, try a simpler approach
-            await global.db.db.run(`
-                INSERT OR REPLACE INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
-                VALUES (?, ?, ?, ?, ?)
-            `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
+            console.error('Error updating user data:', error);
         }
     }
 }
@@ -781,17 +783,6 @@ function isInAllowedFeedbackThread(channel) {
 
 function hasStaffPermissions(member) {
     return member?.permissions?.has(PermissionFlagsBits.ManageMessages);
-}
-
-async function logFeedbackForMessage(messageId, userId) {
-    try {
-        await global.db.db.run(
-            'INSERT OR REPLACE INTO logged_feedback (message_id, user_id) VALUES (?, ?)',
-            [messageId, userId]
-        );
-    } catch (error) {
-        console.error('Error logging feedback:', error);
-    }
 }
 
 async function logFeedbackForMessage(messageId, userId) {
@@ -1492,14 +1483,6 @@ async function handleSlashCommand(interaction) {
 
 // ===== FEEDBACK COMMANDS =====
 
-async function logFeedbackForMessage(messageId, userId) {
-    try {
-        await global.db.db.run('INSERT OR REPLACE INTO logged_feedback (message_id, user_id) VALUES (?, ?)', [messageId, userId]);
-    } catch (error) {
-        // Ignore errors
-    }
-}
-
 async function hasUserLoggedFeedbackForMessage(messageId, userId) {
     try {
         const result = await global.db.db.get('SELECT 1 FROM logged_feedback WHERE message_id = ? AND user_id = ?', [messageId, userId]);
@@ -1599,7 +1582,6 @@ async function processFeedbackCommand(user, member, channel, isSlash, interactio
     if (await hasUserLoggedFeedbackForMessage(latestMessage.id, user.id)) {
         const embed = new EmbedBuilder()
             .setTitle('Feedback Already Logged ☝️')
-            .setDescription('Each new message may only be counted once.')
             .setColor(0xFF9900);
         
         if (isSlash) {
@@ -1801,84 +1783,6 @@ async function handleBuySlashCommand(interaction) {
     const result = await processPurchase(interaction.user.id, itemKey, quantity, interaction.member, interaction.guild);
     const embed = createPurchaseResultEmbed(interaction.user, itemKey, quantity, result, interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function processPurchase(userId, itemKey, quantity, member, guild) {
-    const item = STORE_ITEMS[itemKey];
-    const userRecord = await getUserData(userId);
-    const totalCost = item.price * quantity;
-    
-    // Check level requirements for color roles ONLY
-    if (item.category === 'color' && !hasLevel15Role(member)) {
-        return { 
-            success: false, 
-            reason: 'insufficient_level',
-            requiredLevel: 15
-        };
-    }
-    
-    // For shelf purchases, check if already purchased
-    if (itemKey === 'shelf' && userRecord.purchases.includes(itemKey)) {
-    return { success: false, reason: 'already_purchased' };
-}
-
-    // For color roles, prevent buying the same color they currently have active
-    if (item.category === 'color') {
-        const currentlyHasThisColor = member.roles.cache.some(role => role.name === item.name);
-    if (currentlyHasThisColor) {
-        return { success: false, reason: 'color_already_active' };
-        }
-    }
-    
-    if (userRecord.currentCredits < totalCost) {
-        return {
-            success: false,
-            reason: 'insufficient_credits',
-            needed: totalCost - userRecord.currentCredits,
-            current: userRecord.currentCredits,
-            totalCost: totalCost
-        };
-    }
-    
-    if (await spendCredits(userId, totalCost)) {
-        if (itemKey === 'shelf') {
-            await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
-            if (item.role) {
-                await assignPurchaseRoles(member, guild, itemKey);
-            }
-            return { success: true, creditsSpent: totalCost, quantity: quantity };
-        } else if (itemKey === 'lease') {
-            await addLeases(userId, quantity);
-            return { success: true, creditsSpent: totalCost, quantity: quantity };
-        } else if (item.category === 'color') {
-    // Handle color role purchase - this will remove old colors and assign new one
-    try {
-        await assignColorRole(member, guild, itemKey);
-        
-        // Remove all previous color purchases from database and add the new one
-        await removeAllUserColorPurchases(userId);
-        await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
-        
-        return { 
-            success: true, 
-            creditsSpent: totalCost, 
-            quantity: quantity,
-            newColor: item.name,
-            replaced: true // Indicate this was a replacement
-        };
-    } catch (error) {
-        console.error('Color role assignment failed:', error);
-        // Refund the credits if color role assignment fails
-        const userData = await getUserData(userId);
-        await updateUserData(userId, { 
-            currentCredits: userData.currentCredits + totalCost 
-        });
-        return { success: false, reason: 'color_role_failed' };
-    }
-}
-    }
-    
-    return { success: false, reason: 'unknown_error' };
 }
 
 async function assignPurchaseRoles(member, guild, itemKey) {
@@ -2250,15 +2154,25 @@ async function handleFeedbackAddSlashCommand(interaction) {
 }
 
 async function addFeedbackToUser(userId, amount) {
+    // Add to monthly count
     const currentCount = await getUserMonthlyFeedback(userId);
     const newCount = currentCount + amount;
     await setUserMonthlyFeedback(userId, newCount);
     
+    // Add to total feedback and current credits
     const userRecord = await getUserData(userId);
-    await updateUserData(userId, {
-        totalFeedbackAllTime: userRecord.totalFeedbackAllTime + amount,
-        currentCredits: userRecord.currentCredits + amount
-    });
+    
+    // Use direct database update to ensure it works
+    await global.db.db.run(`
+        INSERT OR REPLACE INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
+        VALUES (?, ?, ?, ?, ?)
+    `, [
+        userId, 
+        userRecord.totalFeedbackAllTime + amount,
+        userRecord.currentCredits + amount,
+        userRecord.bookshelfPosts,
+        userRecord.chapterLeases
+    ]);
     
     return { currentCount, newCount };
 }
