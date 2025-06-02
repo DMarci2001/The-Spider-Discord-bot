@@ -27,7 +27,8 @@ const STORE_ITEMS = {
         price: 1,
         role: "Shelf Owner",
         emoji: "📚",
-        allowQuantity: false
+        allowQuantity: false,
+        category: "access"
     },
     lease: {
         name: "Chapter Lease",
@@ -35,7 +36,119 @@ const STORE_ITEMS = {
         price: 1,
         role: null,
         emoji: "📝",
-        allowQuantity: true
+        allowQuantity: true,
+        category: "utility"
+    },
+    // New color roles
+    mocha_mousse: {
+        name: "Mocha Mousse",
+        description: "A warm, choccy brown that evokes comfort and grounding",
+        color: 0xA47864,
+        price: 1,
+        emoji: "🤎",
+        year: "2025",
+        category: "color",
+        levelRequired: 15
+    },
+    peach_fuzz: {
+        name: "Peach Fuzz",
+        description: "A soft, gentle peach that radiates warmth and community",
+        color: 0xFFBE98,
+        price: 1,
+        emoji: "🍑",
+        year: "2024",
+        category: "color",
+        levelRequired: 15
+    },
+    viva_magenta: {
+        name: "Viva Magenta",
+        description: "A bold, vibrant purple that screams vigor and craziness",
+        color: 0xFF00FF,
+        price: 1,
+        emoji: "🔮",
+        year: "2023",
+        category: "color",
+        levelRequired: 15
+    },
+    very_peri: {
+        name: "Very Peri",
+        description: "A dynamic periwinkle blue with violet undertones",
+        color: 0x6667AB,
+        price: 1,
+        emoji: "💜",
+        year: "2022",
+        category: "color",
+        levelRequired: 15
+    },
+    illuminating_yellow: {
+        name: "Illuminating Yellow",
+        description: "A bright, cheerful yellow that sparks optimism",
+        color: 0xF5DF4D,
+        price: 1,
+        emoji: "💛",
+        year: "2021",
+        category: "color",
+        levelRequired: 15
+    },
+    living_coral: {
+        name: "Living Coral",
+        description: "An animating orange-pink that energizes and enlivens",
+        color: 0xFF6F61,
+        price: 1,
+        emoji: "🦩",
+        year: "2019",
+        category: "color",
+        levelRequired: 15
+    },
+    marsala: {
+        name: "Marsala",
+        description: "A rich, wine-red that exudes sophistication",
+        color: 0x955251,
+        price: 1,
+        emoji: "🍷",
+        year: "2015",
+        category: "color",
+        levelRequired: 15
+    },
+    greenery: {
+        name: "Greenery",
+        description: "A fresh, zesty yellow-green that revitalizes",
+        color: 0x88B04B,
+        price: 1,
+        emoji: "🌿",
+        year: "2017",
+        category: "color",
+        levelRequired: 15
+    },
+    mimosa: {
+        name: "Mimosa",
+        description: "A warm, encouraging golden yellow",
+        color: 0xF0C05A,
+        price: 1,
+        emoji: "🥂",
+        year: "2009",
+        category: "color",
+        levelRequired: 15
+    },
+    chilli_pepper: {
+        name: "Chilli Pepper",
+        description: "A bold, spicy red that commands attention",
+        color: 0x9B1B30,
+        price: 1,
+        emoji: "🌶️",
+        year: "2007",
+        category: "color",
+        levelRequired: 15
+    },
+    ultimate_gray: {
+        name: "Ultimate Gray",
+        description: "A timeless, neutral gray",
+        color: 0x939597,
+        price: 1,
+        emoji: "🐘",
+        year: "2021",
+        category: "color",
+        levelRequired: 15
     }
 };
 
@@ -540,16 +653,6 @@ function canCreateBookshelfThread(member) {
     return hasShelfRole(member) && hasReaderRole(member);
 }
 
-async function canPostInBookshelf(userId, member) {
-    const user = await getUserData(userId);
-    const hasEnoughFeedback = user.totalFeedbackAllTime >= MINIMUM_FEEDBACK_FOR_SHELF;
-    const hasShelfPurchase = user.purchases.includes('shelf');
-    const hasRequiredRoles = member ? (hasShelfRole(member) && hasReaderRole(member)) : false;
-    const hasLeases = user.chapterLeases > 0;
-    
-    return hasEnoughFeedback && hasShelfPurchase && hasRequiredRoles && hasLeases;
-}
-
 async function spendCredits(userId, amount) {
     const userData = await getUserData(userId);
     const validAmount = Math.max(0, Math.floor(amount));
@@ -664,6 +767,56 @@ async function logFeedbackForMessage(messageId, userId) {
         );
     } catch (error) {
         console.error('Error logging feedback:', error);
+    }
+}
+
+async function assignColorRole(member, guild, itemKey) {
+    const item = STORE_ITEMS[itemKey];
+    
+    // Find the highest Level role position to place color role above it
+    let targetPosition = 1;
+    const memberRoles = member.roles.cache;
+    
+    for (const role of memberRoles.values()) {
+        if (role.name.startsWith('Level ')) {
+            targetPosition = Math.max(targetPosition, role.position + 1);
+        }
+    }
+    
+    // Create or find the color role
+    let colorRole = guild.roles.cache.find(r => r.name === item.name);
+    if (!colorRole) {
+        try {
+            colorRole = await guild.roles.create({
+                name: item.name,
+                color: item.color,
+                reason: `Color role purchase: ${item.name}`,
+                hoist: false, // Don't display separately in member list
+                mentionable: false,
+                position: targetPosition // Position above Level roles
+            });
+            console.log(`Created color role: ${item.name} with color ${item.color.toString(16)} at position ${targetPosition}`);
+        } catch (error) {
+            console.log(`Failed to create color role ${item.name}:`, error.message);
+            throw error;
+        }
+    } else {
+        // Update position to ensure it's above Level roles
+        try {
+            await colorRole.setPosition(targetPosition);
+            console.log(`Updated ${item.name} position to ${targetPosition}`);
+        } catch (error) {
+            console.log(`Failed to set color role position:`, error.message);
+        }
+    }
+    
+    // Assign the color role
+    try {
+        await member.roles.add(colorRole);
+        console.log(`Added ${item.name} color role to ${member.displayName}`);
+    } catch (error) {
+        console.log(`Failed to add ${item.name} color role:`, error.message);
+        throw error;
     }
 }
 
@@ -860,7 +1013,19 @@ const commands = [
         .addStringOption(option => option.setName('item').setDescription('Item to purchase').setRequired(true)
             .addChoices(
                 { name: 'Bookshelf Access (1 credit)', value: 'shelf' },
-                { name: 'Chapter Lease (1 credit)', value: 'lease' }
+                { name: 'Chapter Lease (1 credit)', value: 'lease' },
+                // Color roles
+                { name: '🤎 Mocha Mousse (2025) - 1 credit', value: 'mocha_mousse' },
+                { name: '🍑 Peach Fuzz (2024) - 1 credit', value: 'peach_fuzz' },
+                { name: '🔮 Viva Magenta (2023) - 1 credit', value: 'viva_magenta' },
+                { name: '💜 Very Peri (2022) - 1 credit', value: 'very_peri' },
+                { name: '💛 Illuminating Yellow (2021) - 1 credit', value: 'illuminating_yellow' },
+                { name: '🐘 Ultimate Gray (2021) - 1 credit', value: 'ultimate_gray' },
+                { name: '🦩 Living Coral (2019) - 1 credit', value: 'living_coral' },
+                { name: '🌿 Greenery (2017) - 1 credit', value: 'greenery' },
+                { name: '🍷 Marsala (2015) - 1 credit', value: 'marsala' },
+                { name: '🥂 Mimosa (2009) - 1 credit', value: 'mimosa' },
+                { name: '🌶️ Chilli Pepper (2007) - 1 credit', value: 'chilli_pepper' }
             ))
         .addIntegerOption(option => option.setName('quantity').setDescription('Quantity to purchase (only for leases)').setRequired(false).setMinValue(1).setMaxValue(50)),
     
@@ -1520,16 +1685,54 @@ function createStoreEmbed(guild) {
     const channels = getClickableChannelMentions(guild);
     const roles = getClickableRoleMentions(guild);
     
+    // Get all color items and make them compact
+    const colorItems = Object.entries(STORE_ITEMS).filter(([key, item]) => item.category === 'color');
+    const colorList = colorItems.map(([key, item]) => {
+        // Shortened descriptions
+        const shortDescs = {
+            'mocha_mousse': 'warm brown',
+            'peach_fuzz': 'soft peach',
+            'viva_magenta': 'bold purple',
+            'very_peri': 'periwinkle blue',
+            'illuminating_yellow': 'bright yellow',
+            'living_coral': 'orange-pink',
+            'marsala': 'wine red',
+            'greenery': 'fresh green',
+            'mimosa': 'golden yellow',
+            'chilli_pepper': 'spicy red',
+            'ultimate_gray': 'neutral gray'
+        };
+        return `${item.emoji} **${item.name}** (${shortDescs[key]})`;
+    }).join(' • ');
+    
     return new EmbedBuilder()
         .setTitle('Type&Draft Literary Emporium ☝️')
         .addFields(
-            { name: '📚 Bookshelf Access', value: `Grants you the ${roles.shelfOwner} role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} credit\n**Note:** ${roles.reader} role must be assigned by staff separately based on feedback quality`, inline: false },
-            { name: '📝 Chapter Lease', value: `Allows you to post one message in your bookshelf thread\n**Price:** ${STORE_ITEMS.lease.price} credit each\n**Note:** You can buy multiple leases at once by specifying quantity\n**Special Content:** Contact staff via ticket for free leases when posting maps, artwork, or other non-chapter content`, inline: false },
-            { name: 'How to Purchase', value: `• \`/buy shelf\` - Purchase bookshelf access\n• \`/buy lease\` - Purchase 1 chapter lease\n• \`/buy lease quantity:5\` - Purchase 5 chapter leases`, inline: false }
+            { 
+                name: '📚 Bookshelf Access', 
+                value: `Grants you the ${roles.shelfOwner} role to create threads in ${channels.bookshelf}\n**Price:** ${STORE_ITEMS.shelf.price} credit\n**Note:** ${roles.reader} role must be assigned by staff separately based on feedback quality`, 
+                inline: false 
+            },
+            { 
+                name: '📝 Chapter Lease', 
+                value: `Allows you to post one message in your bookshelf thread\n**Price:** ${STORE_ITEMS.lease.price} credit each\n**Note:** You can buy multiple leases at once by specifying quantity\n**Special Content:** Contact staff via ticket for free leases when posting maps, artwork, or other non-chapter content`, 
+                inline: false 
+            },
+            { 
+                name: '🎨 Color Roles (Level 15 Required, 1 credit each)', 
+                value: colorList, 
+                inline: false 
+            },
+            { 
+                name: 'How to Purchase', 
+                value: `• \`/buy shelf\` - Purchase bookshelf access\n• \`/buy lease\` - Purchase 1 chapter lease\n• \`/buy lease quantity:5\` - Purchase 5 chapter leases\n• \`/buy [color_name]\` - Purchase a color role`, 
+                inline: false 
+            }
         )
         .setColor(0xFF8C00)
         .setFooter({ text: 'All purchases support our thriving literary community.' });
 }
+
 
 // ===== BUY COMMANDS =====
 async function handleBuyCommand(message, args) {
@@ -1557,9 +1760,23 @@ async function processPurchase(userId, itemKey, quantity, member, guild) {
     const userRecord = await getUserData(userId);
     const totalCost = item.price * quantity;
     
+    // Check level requirements for color roles ONLY
+    if (item.category === 'color' && !hasLevel15Role(member)) {
+        return { 
+            success: false, 
+            reason: 'insufficient_level',
+            requiredLevel: 15
+        };
+    }
+    
     // For shelf purchases, check if already purchased
     if (itemKey === 'shelf' && userRecord.purchases.includes(itemKey)) {
         return { success: false, reason: 'already_purchased' };
+    }
+    
+    // For color roles, check if user already has this specific color
+    if (item.category === 'color' && userRecord.purchases.includes(itemKey)) {
+        return { success: false, reason: 'color_already_owned' };
     }
     
     if (userRecord.currentCredits < totalCost) {
@@ -1578,11 +1795,26 @@ async function processPurchase(userId, itemKey, quantity, member, guild) {
             if (item.role) {
                 await assignPurchaseRoles(member, guild, itemKey);
             }
+            return { success: true, creditsSpent: totalCost, quantity: quantity };
         } else if (itemKey === 'lease') {
             await addLeases(userId, quantity);
+            return { success: true, creditsSpent: totalCost, quantity: quantity };
+        } else if (item.category === 'color') {
+            // Handle color role purchase - use try/catch to prevent breaking
+            try {
+                await assignColorRole(member, guild, itemKey);
+                await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
+                return { success: true, creditsSpent: totalCost, quantity: quantity };
+            } catch (error) {
+                console.error('Color role assignment failed:', error);
+                // Refund the credits if color role assignment fails
+                const userData = await getUserData(userId);
+                await updateUserData(userId, { 
+                    currentCredits: userData.currentCredits + totalCost 
+                });
+                return { success: false, reason: 'color_role_failed' };
+            }
         }
-        
-        return { success: true, creditsSpent: totalCost, quantity: quantity };
     }
     
     return { success: false, reason: 'unknown_error' };
@@ -1619,30 +1851,117 @@ async function assignPurchaseRoles(member, guild, itemKey) {
     }
 }
 
+async function processPurchase(userId, itemKey, quantity, member, guild) {
+    const item = STORE_ITEMS[itemKey];
+    const userRecord = await getUserData(userId);
+    const totalCost = item.price * quantity;
+    
+    // Check level requirements for color roles
+    if (item.category === 'color' && item.levelRequired) {
+        if (!hasLevel15Role(member)) {
+            return { 
+                success: false, 
+                reason: 'insufficient_level',
+                requiredLevel: item.levelRequired
+            };
+        }
+    }
+    
+    // For shelf purchases, check if already purchased
+    if (itemKey === 'shelf' && userRecord.purchases.includes(itemKey)) {
+        return { success: false, reason: 'already_purchased' };
+    }
+    
+    // For color roles, check if user already has this specific color
+    if (item.category === 'color' && userRecord.purchases.includes(itemKey)) {
+        return { success: false, reason: 'color_already_owned' };
+    }
+    
+    if (userRecord.currentCredits < totalCost) {
+        return {
+            success: false,
+            reason: 'insufficient_credits',
+            needed: totalCost - userRecord.currentCredits,
+            current: userRecord.currentCredits,
+            totalCost: totalCost
+        };
+    }
+    
+    if (await spendCredits(userId, totalCost)) {
+        if (itemKey === 'shelf') {
+            await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
+            if (item.role) {
+                await assignPurchaseRoles(member, guild, itemKey);
+            }
+        } else if (itemKey === 'lease') {
+            await addLeases(userId, quantity);
+        } else if (item.category === 'color') {
+            // Handle color role purchase
+            await assignColorRole(member, guild, itemKey);
+            await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
+            
+            return { 
+                success: true, 
+                creditsSpent: totalCost, 
+                quantity: quantity,
+                newColor: item.name
+            };
+        }
+        
+        return { success: true, creditsSpent: totalCost, quantity: quantity };
+    }
+    
+    return { success: false, reason: 'unknown_error' };
+}
+
 function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
     const item = STORE_ITEMS[itemKey];
     const channels = getClickableChannelMentions(guild);
     const roles = getClickableRoleMentions(guild);
     
     if (!result.success) {
-        const errorEmbeds = {
-            already_purchased: new EmbedBuilder()
+        if (result.reason === 'already_purchased') {
+            return new EmbedBuilder()
                 .setTitle('Item Already Acquired')
-                .setColor(0xFF9900),
-            
-            insufficient_credits: new EmbedBuilder()
+                .setColor(0xFF9900);
+        }
+        
+        if (result.reason === 'color_already_owned') {
+            return new EmbedBuilder()
+                .setTitle('Color Already Owned ☝️')
+                .setDescription(`You already possess the **${item.name}** color role, dear writer.`)
+                .setColor(0xFF9900);
+        }
+        
+        if (result.reason === 'insufficient_level') {
+            return new EmbedBuilder()
+                .setTitle(`Level ${result.requiredLevel} Required ☝️`)
+                .setDescription(`Color roles are reserved for our most distinguished members who have reached **Level ${result.requiredLevel}** status.`)
+                .setColor(0xFF9900);
+        }
+        
+        if (result.reason === 'color_role_failed') {
+            return new EmbedBuilder()
+                .setTitle('Color Role Assignment Failed ☝️')
+                .setDescription('There was an issue assigning your color role. Your credits have been refunded.')
+                .setColor(0xFF6B6B);
+        }
+        
+        if (result.reason === 'insufficient_credits') {
+            return new EmbedBuilder()
                 .setTitle('Insufficient Credits')
                 .addFields({
                     name: 'Required Amount', value: `${result.totalCost} credit${result.totalCost === 1 ? '' : 's'}`, inline: true
                 }, {
                     name: 'Still Needed', value: `${result.needed} more credit${result.needed === 1 ? '' : 's'}`, inline: true
                 })
-                .setColor(0xFF6B6B)
-        };
+                .setColor(0xFF6B6B);
+        }
         
-        return errorEmbeds[result.reason] || new EmbedBuilder().setTitle('Purchase Failed').setColor(0xFF6B6B);
+        return new EmbedBuilder().setTitle('Purchase Failed').setColor(0xFF6B6B);
     }
     
+    // Success cases
     if (itemKey === 'shelf') {
         return new EmbedBuilder()
             .setTitle('Purchase Completed Successfully ☝️')
@@ -1661,9 +1980,24 @@ function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
                 { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true }
             )
             .setColor(0x00AA55);
+    } else if (item.category === 'color') {
+        return new EmbedBuilder()
+            .setTitle('Color Role Acquired ☝️')
+            .addFields(
+                { name: 'New Color Role', value: `${item.emoji} **${item.name}**`, inline: true },
+                { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true }
+            )
+            .setColor(item.color);
     }
+    
+    // Fallback for other items
+    return new EmbedBuilder()
+        .setTitle('Purchase Completed ☝️')
+        .addFields(
+            { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true }
+        )
+        .setColor(0x00AA55);
 }
-
 // ===== STAFF COMMANDS =====
 
 // Rules Message for #rules channel
