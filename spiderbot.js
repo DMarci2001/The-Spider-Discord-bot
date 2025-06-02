@@ -507,6 +507,41 @@ function getClickableRoleMentions(guild) {
 
 // ===== UTILITY FUNCTIONS =====
 
+// Helper function to remove existing color roles from a user
+async function removeExistingColorRoles(member, guild) {
+    const userColorRoles = member.roles.cache.filter(role => {
+        return Object.values(STORE_ITEMS).some(storeItem => 
+            storeItem.category === 'color' && storeItem.name === role.name
+        );
+    });
+    
+    for (const role of userColorRoles.values()) {
+        try {
+            await member.roles.remove(role);
+            console.log(`Removed existing color role ${role.name} from ${member.displayName}`);
+        } catch (error) {
+            console.log(`Failed to remove color role ${role.name}:`, error.message);
+        }
+    }
+}
+
+// Helper function to remove all color purchases from database
+async function removeAllUserColorPurchases(userId) {
+    try {
+        // Get all color item keys
+        const colorItems = Object.keys(STORE_ITEMS).filter(key => STORE_ITEMS[key].category === 'color');
+        
+        // Remove all color purchases for this user
+        for (const colorKey of colorItems) {
+            await global.db.db.run('DELETE FROM user_purchases WHERE user_id = ? AND item = ?', [userId, colorKey]);
+        }
+        
+        console.log(`Removed all previous color purchases for user ${userId}`);
+    } catch (error) {
+        console.error(`Error removing color purchases for user ${userId}:`, error);
+    }
+}
+
 function hasLevel15Role(member) {
     if (!member?.roles?.cache) {
         console.log('Invalid member object');
@@ -628,32 +663,18 @@ async function updateUserData(userId, updates) {
         try {
             const result = await global.db.db.run(`UPDATE users SET ${fields.join(', ')} WHERE user_id = ?`, values);
             if (result.changes === 0) {
-                // User doesn't exist, create them with current data preserved
-                const currentData = await getUserData(userId);
+                // User doesn't exist, create them
                 await global.db.db.run(`
                     INSERT INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
                     VALUES (?, ?, ?, ?, ?)
-                `, [
-                    userId, 
-                    updates.totalFeedbackAllTime !== undefined ? updates.totalFeedbackAllTime : currentData.totalFeedbackAllTime,
-                    updates.currentCredits !== undefined ? updates.currentCredits : currentData.currentCredits,
-                    updates.bookshelfPosts !== undefined ? updates.bookshelfPosts : currentData.bookshelfPosts,
-                    updates.chapterLeases !== undefined ? updates.chapterLeases : currentData.chapterLeases
-                ]);
+                `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
             }
         } catch (error) {
-            // If insert fails, get current data and preserve it
-            const currentData = await getUserData(userId);
+            // If insert fails, try a simpler approach
             await global.db.db.run(`
                 INSERT OR REPLACE INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
                 VALUES (?, ?, ?, ?, ?)
-            `, [
-                userId,
-                updates.totalFeedbackAllTime !== undefined ? updates.totalFeedbackAllTime : currentData.totalFeedbackAllTime,
-                updates.currentCredits !== undefined ? updates.currentCredits : currentData.currentCredits,
-                updates.bookshelfPosts !== undefined ? updates.bookshelfPosts : currentData.bookshelfPosts,
-                updates.chapterLeases !== undefined ? updates.chapterLeases : currentData.chapterLeases
-            ]);
+            `, [userId, updates.totalFeedbackAllTime || 0, updates.currentCredits || 0, updates.bookshelfPosts || 0, updates.chapterLeases || 0]);
         }
     }
 }
@@ -787,14 +808,27 @@ async function logFeedbackForMessage(messageId, userId) {
 async function assignColorRole(member, guild, itemKey) {
     const item = STORE_ITEMS[itemKey];
     
-    // Find the highest Level role position to place color role above it
+    // First, remove any existing color roles from the user
+    await removeExistingColorRoles(member, guild);
+    
+    // Find the highest role position to place color role above everything
     let targetPosition = 1;
     const memberRoles = member.roles.cache;
     
+    // Get the highest position among the user's current roles
     for (const role of memberRoles.values()) {
-        if (role.name.startsWith('Level ')) {
-            targetPosition = Math.max(targetPosition, role.position + 1);
-        }
+        targetPosition = Math.max(targetPosition, role.position + 1);
+    }
+    
+    // Also check existing color roles in the server to position above them
+    const existingColorRoles = guild.roles.cache.filter(role => {
+        return Object.values(STORE_ITEMS).some(storeItem => 
+            storeItem.category === 'color' && storeItem.name === role.name
+        );
+    });
+    
+    for (const role of existingColorRoles.values()) {
+        targetPosition = Math.max(targetPosition, role.position + 1);
     }
     
     // Create or find the color role
@@ -807,7 +841,7 @@ async function assignColorRole(member, guild, itemKey) {
                 reason: `Color role purchase: ${item.name}`,
                 hoist: false, // Don't display separately in member list
                 mentionable: false,
-                position: targetPosition // Position above Level roles
+                position: targetPosition // Position at the top
             });
             console.log(`Created color role: ${item.name} with color ${item.color.toString(16)} at position ${targetPosition}`);
         } catch (error) {
@@ -815,7 +849,7 @@ async function assignColorRole(member, guild, itemKey) {
             throw error;
         }
     } else {
-        // Update position to ensure it's above Level roles
+        // Update position to ensure it's the highest role
         try {
             await colorRole.setPosition(targetPosition);
             console.log(`Updated ${item.name} position to ${targetPosition}`);
@@ -1785,12 +1819,15 @@ async function processPurchase(userId, itemKey, quantity, member, guild) {
     
     // For shelf purchases, check if already purchased
     if (itemKey === 'shelf' && userRecord.purchases.includes(itemKey)) {
-        return { success: false, reason: 'already_purchased' };
-    }
-    
-    // For color roles, check if user already has this specific color
-    if (item.category === 'color' && userRecord.purchases.includes(itemKey)) {
-        return { success: false, reason: 'color_already_owned' };
+    return { success: false, reason: 'already_purchased' };
+}
+
+    // For color roles, prevent buying the same color they currently have active
+    if (item.category === 'color') {
+        const currentlyHasThisColor = member.roles.cache.some(role => role.name === item.name);
+    if (currentlyHasThisColor) {
+        return { success: false, reason: 'color_already_active' };
+        }
     }
     
     if (userRecord.currentCredits < totalCost) {
@@ -1814,21 +1851,31 @@ async function processPurchase(userId, itemKey, quantity, member, guild) {
             await addLeases(userId, quantity);
             return { success: true, creditsSpent: totalCost, quantity: quantity };
         } else if (item.category === 'color') {
-            // Handle color role purchase - use try/catch to prevent breaking
-            try {
-                await assignColorRole(member, guild, itemKey);
-                await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
-                return { success: true, creditsSpent: totalCost, quantity: quantity };
-            } catch (error) {
-                console.error('Color role assignment failed:', error);
-                // Refund the credits if color role assignment fails
-                const userData = await getUserData(userId);
-                await updateUserData(userId, { 
-                    currentCredits: userData.currentCredits + totalCost 
-                });
-                return { success: false, reason: 'color_role_failed' };
-            }
-        }
+    // Handle color role purchase - this will remove old colors and assign new one
+    try {
+        await assignColorRole(member, guild, itemKey);
+        
+        // Remove all previous color purchases from database and add the new one
+        await removeAllUserColorPurchases(userId);
+        await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
+        
+        return { 
+            success: true, 
+            creditsSpent: totalCost, 
+            quantity: quantity,
+            newColor: item.name,
+            replaced: true // Indicate this was a replacement
+        };
+    } catch (error) {
+        console.error('Color role assignment failed:', error);
+        // Refund the credits if color role assignment fails
+        const userData = await getUserData(userId);
+        await updateUserData(userId, { 
+            currentCredits: userData.currentCredits + totalCost 
+        });
+        return { success: false, reason: 'color_role_failed' };
+    }
+}
     }
     
     return { success: false, reason: 'unknown_error' };
@@ -1886,9 +1933,12 @@ async function processPurchase(userId, itemKey, quantity, member, guild) {
         return { success: false, reason: 'already_purchased' };
     }
     
-    // For color roles, check if user already has this specific color
-    if (item.category === 'color' && userRecord.purchases.includes(itemKey)) {
-        return { success: false, reason: 'color_already_owned' };
+    // For color roles, only prevent buying the same color they currently have active
+    if (item.category === 'color') {
+        const currentlyHasThisColor = member.roles.cache.some(role => role.name === item.name);
+        if (currentlyHasThisColor) {
+            return { success: false, reason: 'color_already_active' };
+        }
     }
     
     if (userRecord.currentCredits < totalCost) {
@@ -1907,22 +1957,31 @@ async function processPurchase(userId, itemKey, quantity, member, guild) {
             if (item.role) {
                 await assignPurchaseRoles(member, guild, itemKey);
             }
+            return { success: true, creditsSpent: totalCost, quantity: quantity };
         } else if (itemKey === 'lease') {
             await addLeases(userId, quantity);
+            return { success: true, creditsSpent: totalCost, quantity: quantity };
         } else if (item.category === 'color') {
-            // Handle color role purchase
-            await assignColorRole(member, guild, itemKey);
-            await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
-            
-            return { 
-                success: true, 
-                creditsSpent: totalCost, 
-                quantity: quantity,
-                newColor: item.name
-            };
+            try {
+                await assignColorRole(member, guild, itemKey);
+                await removeAllUserColorPurchases(userId);
+                await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [userId, itemKey]);
+                return { 
+                    success: true, 
+                    creditsSpent: totalCost, 
+                    quantity: quantity,
+                    newColor: item.name,
+                    replaced: true
+                };
+            } catch (error) {
+                console.error('Color role assignment failed:', error);
+                const userData = await getUserData(userId);
+                await updateUserData(userId, { 
+                    currentCredits: userData.currentCredits + totalCost 
+                });
+                return { success: false, reason: 'color_role_failed' };
+            }
         }
-        
-        return { success: true, creditsSpent: totalCost, quantity: quantity };
     }
     
     return { success: false, reason: 'unknown_error' };
@@ -1940,12 +1999,12 @@ function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
                 .setColor(0xFF9900);
         }
         
-        if (result.reason === 'color_already_owned') {
-            return new EmbedBuilder()
-                .setTitle('Color Already Owned ☝️')
-                .setDescription(`You already possess the **${item.name}** color role, dear writer.`)
-                .setColor(0xFF9900);
-        }
+        if (result.reason === 'color_already_active') {
+    return new EmbedBuilder()
+        .setTitle('Color Currently Active ☝️')
+        .setDescription(`You already have the **${item.name}** color role active, dear writer. Perhaps you'd prefer a different hue from our distinguished palette?`)
+        .setColor(0xFF9900);
+    }
         
         if (result.reason === 'insufficient_level') {
             return new EmbedBuilder()
@@ -1995,14 +2054,21 @@ function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
             )
             .setColor(0x00AA55);
     } else if (item.category === 'color') {
-        return new EmbedBuilder()
-            .setTitle('Color Role Acquired ☝️')
-            .addFields(
-                { name: 'New Color Role', value: `${item.emoji} **${item.name}**`, inline: true },
-                { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true }
-            )
-            .setColor(item.color);
-    }
+    const title = result.replaced ? 'Color Role Replaced ☝️' : 'Color Role Acquired ☝️';
+    const description = result.replaced ? 
+        'Your previous color role has been replaced with your new selection.' : 
+        'Your new color role has been successfully assigned.';
+    
+    return new EmbedBuilder()
+        .setTitle(title)
+        .setDescription(description)
+        .addFields(
+            { name: 'New Color Role', value: `${item.emoji} **${item.name}**`, inline: true },
+            { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
+            { name: 'Note', value: 'Your name will now display in this color throughout the server.', inline: false }
+        )
+        .setColor(item.color);
+}
     
     // Fallback for other items
     return new EmbedBuilder()
