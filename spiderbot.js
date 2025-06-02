@@ -2060,7 +2060,7 @@ async function postServerGuide(channel) {
                 },
                 {
                     name: '📚 The Citadel',
-                    value: `****Level 5** Required:** Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
+                    value: `**Level 5** Required: Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`/store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
                     inline: false
                 },
                 {
