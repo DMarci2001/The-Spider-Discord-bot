@@ -1165,6 +1165,16 @@ const commands = [
 
     new SlashCommandBuilder()
     .setName('shame')
+    .setDescription('Ring the shame bell of King\'s Landing')
+    .addUserOption(option =>
+        option.setName('target')
+            .setDescription('The user to shame')
+            .setRequired(true))
+    .addStringOption(option =>
+        option.setName('reason')
+            .setDescription('Why are they being shamed?')
+            .setRequired(false)
+            .setMaxLength(200))
 ];
 
 async function registerCommands() {
@@ -3269,18 +3279,9 @@ async function setShameCooldown(userId) {
     }
 }
 
-async function cleanupOldShameCooldowns() {
-    try {
-        const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-        await this.db.run('DELETE FROM shame_cooldowns WHERE last_used < ?', [oneDayAgo]);
-    } catch (error) {
-        console.error('Error cleaning up old shame cooldowns:', error);
-    }
-}
-
 async function isOnShameCooldown(userId) {
     const lastUsed = await getShameCooldown(userId);
-    const cooldownTime = 5;
+    const cooldownTime = 5 * 60 * 1000;
     const timeRemaining = (lastUsed + cooldownTime) - Date.now();
     
     if (timeRemaining > 0) {
@@ -3296,6 +3297,8 @@ async function isOnShameCooldown(userId) {
 // STEP 4: Add this main command handler function (add with other command handlers around line 1200)
 async function handleShameSlashCommand(interaction) {
     const userId = interaction.user.id;
+    const targetUser = interaction.options.getUser('target');
+    const reason = interaction.options.getString('reason');
     
     if (!hasLevel15Role(interaction.member)) {
         const embed = new EmbedBuilder()
@@ -3306,6 +3309,26 @@ async function handleShameSlashCommand(interaction) {
                 value: 'Continue participating in the server activities and earning experience to reach Level 15 status.',
                 inline: false
             })
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+
+    // Prevent self-shaming
+    if (targetUser.id === userId) {
+        const embed = new EmbedBuilder()
+            .setTitle('Self-Shaming Forbidden ☝️')
+            .setDescription('Lord Varys whispers: *"One cannot ring the bell of shame upon oneself, my lord. Find another target."*')
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+
+    // Prevent shaming bots
+    if (targetUser.bot) {
+        const embed = new EmbedBuilder()
+            .setTitle('Bots Are Beyond Shame ☝️')
+            .setDescription('Lord Varys whispers: *"The little birds tell me that mechanical servants feel no shame, my lord."*')
             .setColor(0xFF9900);
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -3329,36 +3352,102 @@ async function handleShameSlashCommand(interaction) {
     await interaction.deferReply();
 
     try {
-        let imageUrl = 'https://media.giphy.com/media/vX9WcCiWwUF7G/giphy.gif';
+        // Handpicked clean Game of Thrones shame GIFs
+        const cleanShameGifs = [
+            'https://media.giphy.com/media/m6tmCnGCNvTby/giphy.gif', // Cersei walking
+            'https://media.giphy.com/media/3o7abGQa0aRJUurpII/giphy.gif', // Bell ringing
+            'https://media.giphy.com/media/Ob7p7lDT99cd2/giphy.gif', // Septa Unella
+            'https://media.giphy.com/media/unQ3IJU2RG7DO/giphy.gif', // Another clean one
+        ];
+
+        let imageUrl = cleanShameGifs[Math.floor(Math.random() * cleanShameGifs.length)];
         
+        // Optional: Still try GIPHY API as backup
         if (process.env.GIPHY_API_KEY) {
             try {
                 const response = await fetch(`https://api.giphy.com/v1/gifs/search?q=shame%20bell%20game%20of%20thrones&api_key=${process.env.GIPHY_API_KEY}&limit=20&rating=pg-13`);
                 const data = await response.json();
                 
                 if (data.data && data.data.length > 0) {
-                    const randomIndex = Math.floor(Math.random() * data.data.length);
-                    imageUrl = data.data[randomIndex].images.original.url;
+                    // Filter for cleaner GIFs
+                    const cleanGifs = data.data.filter(gif => {
+                        const title = gif.title.toLowerCase();
+                        return !title.includes('text') && !title.includes('meme');
+                    });
+                    
+                    if (cleanGifs.length > 0) {
+                        const randomIndex = Math.floor(Math.random() * cleanGifs.length);
+                        imageUrl = cleanGifs[randomIndex].images.original.url;
+                    }
                 }
             } catch (giphyError) {
                 console.error('GIPHY API error:', giphyError);
-                // Will use fallback image
+                // Will use handpicked GIF
             }
         }
         
+        // Create shame embed with target and reason
         const shameEmbed = new EmbedBuilder()
-            .setAuthor({ 
-                name: 'Lord Varys, Master of Whisperers'
-            })
-            .setDescription('*A shameful thing, a pitiable thing... shame, shame, shame.*')
-            .setImage(imageUrl)
             .setColor(0x8B0000)
+            .setTitle('🔔 THE WALK OF SHAME 🔔')
+            .addFields(
+                { 
+                    name: '⚔️ Accused by', 
+                    value: `${interaction.user}`, 
+                    inline: true 
+                },
+                { 
+                    name: '👑 Condemned', 
+                    value: `${targetUser}`, 
+                    inline: true 
+                },
+                { 
+                    name: '🔔 Royal Decree', 
+                    value: '*Shame! Shame! Shame!*', 
+                    inline: true 
+                }
+            )
+            .setImage(imageUrl)
             .setFooter({ 
-                text: 'The little birds have spoken'
+                text: 'Lord Varys, Master of Whisperers • The Crown remembers',
             })
             .setTimestamp();
 
-        await interaction.editReply({ embeds: [shameEmbed] });
+        // Add reason if provided
+        if (reason) {
+            shameEmbed.addFields({
+                name: '📜 Crime Against the Realm',
+                value: `*"${reason}"*`,
+                inline: false
+            });
+        } else {
+            shameEmbed.addFields({
+                name: '📜 Crime Against the Realm',
+                value: '*The accused stands charged with general shame-worthy conduct*',
+                inline: false
+            });
+        }
+
+        // Add some Lord Varys flair
+        const varysSayings = [
+            `*Lord Varys whispers*: "The little birds have spoken of ${targetUser.displayName}'s deeds..."`,
+            `*Lord Varys whispers*: "Knowledge is power, and I know of ${targetUser.displayName}'s shame..."`,
+            `*Lord Varys whispers*: "A shameful thing, ${targetUser.displayName}... a pitiable thing..."`,
+            `*Lord Varys whispers*: "The Crown's justice reaches all, even ${targetUser.displayName}..."`,
+            `*Lord Varys whispers*: "Birds across the realm sing of ${targetUser.displayName}'s shame..."`
+        ];
+
+        const randomSaying = varysSayings[Math.floor(Math.random() * varysSayings.length)];
+        shameEmbed.addFields({
+            name: '🕊️ The Spider\'s Web',
+            value: randomSaying,
+            inline: false
+        });
+
+        await interaction.editReply({ 
+            content: `${targetUser} 🔔 **SHAME!**`,
+            embeds: [shameEmbed] 
+        });
         
         await setShameCooldown(userId);
         
@@ -3366,7 +3455,7 @@ async function handleShameSlashCommand(interaction) {
             await global.db.cleanupOldShameCooldowns();
         }
         
-        console.log(`Varys shame bell used by ${interaction.user.displayName} in ${interaction.channel.name}`);
+        console.log(`${interaction.user.displayName} shamed ${targetUser.displayName} in ${interaction.channel.name}${reason ? ` for: ${reason}` : ''}`);
         
     } catch (error) {
         console.error('Error posting Varys shame bell:', error);
