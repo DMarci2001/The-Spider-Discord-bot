@@ -993,10 +993,18 @@ async function processFeedbackContribution(userId) {
     await setUserMonthlyFeedback(userId, newCount);
     
     const userData = await getUserData(userId);
-    await updateUserData(userId, {
-        totalFeedbackAllTime: userData.totalFeedbackAllTime + 1,
-        currentCredits: userData.currentCredits + 1
-    });
+    
+    // Use direct database update instead of updateUserData
+    await global.db.db.run(`
+        INSERT OR REPLACE INTO users (user_id, total_feedback_all_time, current_credits, bookshelf_posts, chapter_leases)
+        VALUES (?, ?, ?, ?, ?)
+    `, [
+        userId, 
+        userData.totalFeedbackAllTime + 1,
+        userData.currentCredits + 1,
+        userData.bookshelfPosts,
+        userData.chapterLeases
+    ]);
     
     return {
         newCount,
