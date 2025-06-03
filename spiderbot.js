@@ -1161,7 +1161,10 @@ const commands = [
     new SlashCommandBuilder()
         .setName('faceless')
         .setDescription('Make an anonymous confession to the community')
-        .addStringOption(option => option.setName('confession').setDescription('Your writing confession').setRequired(true))
+        .addStringOption(option => option.setName('confession').setDescription('Your writing confession').setRequired(true)),
+
+    new SlashCommandBuilder()
+    .setName('shame')
 ];
 
 async function registerCommands() {
@@ -1470,7 +1473,8 @@ async function handleSlashCommand(interaction) {
         manual_purge: () => handleManualPurgeSlashCommand(interaction),
         post_server_guide: () => handlePostServerGuideSlashCommand(interaction),
         post_rules: () => handlePostRulesSlashCommand(interaction),
-        faceless: () => handleFacelessSlashCommand(interaction)
+        faceless: () => handleFacelessSlashCommand(interaction),
+        shame: () => handleShameSlashCommand(interaction)
     };
     
     const handler = commandHandlers[interaction.commandName];
@@ -3239,6 +3243,140 @@ async function handleFacelessSlashCommand(interaction) {
             .setColor(0xFF6B6B);
         
         await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+    }
+}
+
+// ===== SHAME COMMAND =====
+
+async function getShameCooldown(userId) {
+    try {
+        const result = await this.db.get('SELECT last_used FROM shame_cooldowns WHERE user_id = ?', [userId]);
+        return result ? result.last_used : null;
+    } catch (error) {
+        console.error('Error getting shame cooldown:', error);
+        return null;
+    }
+}
+
+async function setShameCooldown(userId) {
+    try {
+        await this.db.run(`
+            INSERT OR REPLACE INTO shame_cooldowns (user_id, last_used) 
+            VALUES (?, ?)
+        `, [userId, Date.now()]);
+    } catch (error) {
+        console.error('Error setting shame cooldown:', error);
+    }
+}
+
+async function cleanupOldShameCooldowns() {
+    try {
+        const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+        await this.db.run('DELETE FROM shame_cooldowns WHERE last_used < ?', [oneDayAgo]);
+    } catch (error) {
+        console.error('Error cleaning up old shame cooldowns:', error);
+    }
+}
+
+async function isOnShameCooldown(userId) {
+    const lastUsed = await getShameCooldown(userId);
+    const cooldownTime = 5;
+    const timeRemaining = (lastUsed + cooldownTime) - Date.now();
+    
+    if (timeRemaining > 0) {
+        return {
+            onCooldown: true,
+            timeRemaining: Math.ceil(timeRemaining / 1000)
+        };
+    }
+    
+    return { onCooldown: false };
+}
+
+// STEP 4: Add this main command handler function (add with other command handlers around line 1200)
+async function handleShameSlashCommand(interaction) {
+    const userId = interaction.user.id;
+    
+    if (!hasLevel15Role(interaction.member)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Level 15 Required ☝️')
+            .setDescription('Lord Varys only serves those who have proven their dedication to our literary realm.')
+            .addFields({
+                name: 'How to Gain Access',
+                value: 'Continue participating in the server activities and earning experience to reach Level 15 status.',
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+
+    const cooldownStatus = await isOnShameCooldown(userId);
+    
+    if (cooldownStatus.onCooldown) {
+        const minutes = Math.floor(cooldownStatus.timeRemaining / 60);
+        const seconds = cooldownStatus.timeRemaining % 60;
+        const timeString = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+        
+        const cooldownEmbed = new EmbedBuilder()
+            .setTitle('Lord Varys Requires Patience ☝️')
+            .setDescription(`The little birds whisper that you must wait **${timeString}** before ringing the bell of shame again, my lord.`)
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [cooldownEmbed], ephemeral: true }, 10000);
+    }
+
+    await interaction.deferReply();
+
+    try {
+        let imageUrl = 'https://media.giphy.com/media/vX9WcCiWwUF7G/giphy.gif';
+        
+        if (process.env.GIPHY_API_KEY) {
+            try {
+                const response = await fetch(`https://api.giphy.com/v1/gifs/search?q=shame%20bell%20game%20of%20thrones&api_key=${process.env.GIPHY_API_KEY}&limit=20&rating=pg-13`);
+                const data = await response.json();
+                
+                if (data.data && data.data.length > 0) {
+                    const randomIndex = Math.floor(Math.random() * data.data.length);
+                    imageUrl = data.data[randomIndex].images.original.url;
+                }
+            } catch (giphyError) {
+                console.error('GIPHY API error:', giphyError);
+                // Will use fallback image
+            }
+        }
+        
+        const shameEmbed = new EmbedBuilder()
+            .setAuthor({ 
+                name: 'Lord Varys, Master of Whisperers'
+            })
+            .setDescription('*A shameful thing, a pitiable thing... shame, shame, shame.*')
+            .setImage(imageUrl)
+            .setColor(0x8B0000)
+            .setFooter({ 
+                text: 'The little birds have spoken'
+            })
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [shameEmbed] });
+        
+        await setShameCooldown(userId);
+        
+        if (Math.random() < 0.1) {
+            await global.db.cleanupOldShameCooldowns();
+        }
+        
+        console.log(`Varys shame bell used by ${interaction.user.displayName} in ${interaction.channel.name}`);
+        
+    } catch (error) {
+        console.error('Error posting Varys shame bell:', error);
+        
+        const errorEmbed = new EmbedBuilder()
+            .setTitle('The Little Birds Have Failed ☝️')
+            .setDescription('Lord Varys\' network has encountered difficulties. Please try again.')
+            .setColor(0xFF6B6B);
+        
+        await interaction.editReply({ embeds: [errorEmbed] });
     }
 }
 
