@@ -2696,7 +2696,6 @@ async function createPardonedLastMonthEmbed(guild) {
         
         return new EmbedBuilder()
             .setTitle(`Pardoned Members - ${monthName} ☝️`)
-            .setDescription('These distinguished members were granted clemency from the monthly feedback requirement during the specified period.')
             .addFields({
                 name: `Pardoned Members (${totalPardoned})`,
                 value: pardonedList || 'None found',
