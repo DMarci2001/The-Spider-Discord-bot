@@ -482,12 +482,12 @@ function getClickableChannelMentions(guild) {
         bump: getChannelMention(guild, 'bump'),
         ticket: getChannelMention(guild, 'ticket'),
         writingChat: getChannelMention(guild, 'writing-chat'),
-        actionHelp: getChannelMention(guild, 'action-help'),
-        dialogueHelp: getChannelMention(guild, 'dialogue-help'),
+        writingHelp: getChannelMention(guild, 'writing-help'),
         onePageCritique: getChannelMention(guild, 'one-page-critique'),
         snippetShowcase: getChannelMention(guild, 'snippet-showcase'),
         bookshelfMemes: getChannelMention(guild, 'bookshelf-memes'),
-        aiArt: getChannelMention(guild, 'ai-art')
+        aiArt: getChannelMention(guild, 'ai-art'),
+        triggered: getChannelMention(guild, 'triggered'),
     };
 }
 
@@ -1989,8 +1989,7 @@ function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
         .setDescription(description)
         .addFields(
             { name: 'New Color Role', value: `${item.emoji} **${item.name}**`, inline: true },
-            { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true },
-            { name: 'Note', value: 'Your name will now display in this color throughout the server.', inline: false }
+            { name: 'Credits Spent', value: `${result.creditsSpent}`, inline: true }
         )
         .setColor(item.color);
 }
@@ -2050,27 +2049,36 @@ async function postServerGuide(channel) {
             .addFields(
                 {
                     name: '🏛️ Welcome Halls',
-                    value: `${channels.reactionRoles} - Claim your roles with a simple reaction\n${channels.rulesChannel} - Our community covenant (read thoroughly)\n${channels.introductions} - Present yourself to our distinguished assembly\n${channels.bump} - Support our community growth with \`/bump\``,
+                    value: `${channels.reactionRoles} - Claim your roles with a simple reaction\n${channels.rulesChannel} - Our community covenant (read thoroughly)\n${channels.introductions} - Present yourself to our distinguished assembly\n${channels.bump} - Support our growth with \`/bump\``,
                     inline: false
                 },
                 {
-                    name: '🎫 Support Quarters',
+                    name: '🏰 The Courts',
                     value: `${channels.ticket} - Private counsel with our esteemed staff\n${channels.botStuff} - My own domain. I advise you to take advantage of the \`/help\` command, so you can learn more about the server's inner workings`,
                     inline: false
                 },
                 {
-                    name: '✍️ Scriptorium',
-                    value: `${channels.writingChat} - General discourse on the craft\n• In the help channels, our community provides specialized guidance\n${channels.onePageCritique} - Submit short excerpts for detailed feedback\n${channels.snippetShowcase} - Display your finest work for admiration`,
+                    name: '☕ Everyday Matters',
+                    value: '• Quarters for discussion concerning daily life, hobbies, and interests',
                     inline: false
                 },
                 {
+                    name: '✍️ Scriptorium',
+                    value: `${channels.writingChat} - General discourse on the craft\n${channels.writingHelp} - Here, our community provides guidance in your literary questions\n${channels.onePageCritique} - Submit short excerpts for detailed feedback\n${channels.snippetShowcase} - Display your finest work for admiration`,
+                    inline: false
+                },
+                {
+                    name: '🎭 Further Entertainment',
+                    value: `${channels.triggered} - Use a popular pictogram to share your most controversial writing opinions\n${channels.bookshelfMemes} - Share humorous jests about the works of your fellow scribes`,
+                },
+                {
                     name: '📚 The Citadel',
-                    value: `**Level 5** Required: Access this domain by engaging with the community.\n${channels.bookshelfFeedback} - Provide thorough feedback using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`/store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
+                    value: `**Level 5** required: Access this domain by engaging with the community\n${channels.bookshelfFeedback} - Provide thorough, tactful critique using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after you have bought a shelf and a lease from the store. **See:** \`/store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
                     inline: false
                 },
                 {
                     name: '💰 Our Credit Economy',
-                    value: `• **Earn:** 1 credit per quality feedback (**Level 5**+ only)\n• **Purchase:** Bookshelf access (1 credit)\n• **Post:** Chapter leases (1 credit each) to publish your work`,
+                    value: `• Earn 1 credit per quality feedback (**Level 5+** only)\n• Purchase Bookshelf access (1 credit)\n• Buy Chapter leases (1 credit each) to publish your work`,
                     inline: false
                 }
             )
@@ -3032,27 +3040,22 @@ function createHelpEmbed(guild) {
         .addFields(
             { 
                 name: `📝 Earning Feedback Credits (**Level 5** Required)`, 
-                value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful feedback\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback!`, 
+                value: `**Step 1:** Visit ${channels.bookshelfFeedback} or ${channels.bookshelfDiscussion} forums\n**Step 2:** Find another writer's thread and provide thoughtful critique\n**Step 3:** Use \`/feedback\` to log your most recent contribution\n**Step 4:** Earn 1 credit per logged feedback!`, 
                 inline: false 
             },
             { 
                 name: '💰 Credit System', 
-                value: '`/balance` - Check your credits and lease availability\n`/hall_of_fame` - See top contributors leaderboard', 
+                value: '`/balance` - Peruse your credits and lease availability\n`/hall_of_fame` - The ranks of our most esteemed contributors', 
                 inline: false 
             },
             { 
                 name: '📚 Bookshelf Access', 
-                value: `\`/store\` - View all the items for sale in our store\n\`/buy shelf\` - Purchase bookshelf access (1 credit)\n**Important:** You need **both** the ${roles.shelfOwner} role (purchasable) **and** the ${roles.reader} role (staff-assigned) to create threads in ${channels.bookshelf}`, 
+                value: `\`/store\` - View all the items for sale on the market\n\`/buy shelf\` - Purchase Bookshelf access (1 credit)\n**Important:** You need **both** the ${roles.shelfOwner} role (purchasable) **and** the ${roles.reader} role (staff-assigned) to create threads in ${channels.bookshelf}`, 
                 inline: false 
             },
             { 
                 name: '✍️ Chapter Posting', 
                 value: 'After gaining bookshelf access:\n1. Purchase chapter leases with `/buy lease` (1 credit each)\n2. Create your thread in the bookshelf forum\n3. Each chapter/short story you post will automatically consume one lease\n4. Contact staff via ticket for free leases when posting maps, artwork, or special content', 
-                inline: false 
-            },
-            { 
-                name: '🎭 Lighthearted Tomfoolery', 
-                value: '`/faceless` - Make anonymous confessions to the community\n*"The Many-Faced God protects your secrets, dear writer"*\n**Note:** To avoid spammers/trolls, Level 15 is required', 
                 inline: false 
             },
             { 
@@ -3259,29 +3262,25 @@ async function handleFacelessSlashCommand(interaction) {
 // ===== SHAME COMMAND =====
 
 async function getShameCooldown(userId) {
-    try {
-        const result = await this.db.get('SELECT last_used FROM shame_cooldowns WHERE user_id = ?', [userId]);
-        return result ? result.last_used : null;
-    } catch (error) {
-        console.error('Error getting shame cooldown:', error);
-        return null;
-    }
+    return await global.db.getShameCooldown(userId);
 }
 
 async function setShameCooldown(userId) {
-    try {
-        await this.db.run(`
-            INSERT OR REPLACE INTO shame_cooldowns (user_id, last_used) 
-            VALUES (?, ?)
-        `, [userId, Date.now()]);
-    } catch (error) {
-        console.error('Error setting shame cooldown:', error);
-    }
+    await global.db.setShameCooldown(userId);
+}
+
+async function cleanupOldShameCooldowns() {
+    await global.db.cleanupOldShameCooldowns(); // Call the database method
 }
 
 async function isOnShameCooldown(userId) {
     const lastUsed = await getShameCooldown(userId);
-    const cooldownTime = 5 * 60 * 1000;
+    const cooldownTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+    
+    if (!lastUsed) {
+        return { onCooldown: false };
+    }
+    
     const timeRemaining = (lastUsed + cooldownTime) - Date.now();
     
     if (timeRemaining > 0) {
@@ -3318,7 +3317,6 @@ async function handleShameSlashCommand(interaction) {
     if (targetUser.id === userId) {
         const embed = new EmbedBuilder()
             .setTitle('Self-Shaming Forbidden ☝️')
-            .setDescription('Lord Varys whispers: *"One cannot ring the bell of shame upon oneself, my lord. Find another target."*')
             .setColor(0xFF9900);
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -3328,7 +3326,6 @@ async function handleShameSlashCommand(interaction) {
     if (targetUser.bot) {
         const embed = new EmbedBuilder()
             .setTitle('Bots Are Beyond Shame ☝️')
-            .setDescription('Lord Varys whispers: *"The little birds tell me that mechanical servants feel no shame, my lord."*')
             .setColor(0xFF9900);
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -3353,38 +3350,10 @@ async function handleShameSlashCommand(interaction) {
 
     try {
         // Handpicked clean Game of Thrones shame GIFs
-        const cleanShameGifs = [
-            'https://media.giphy.com/media/m6tmCnGCNvTby/giphy.gif', // Cersei walking
-            'https://media.giphy.com/media/3o7abGQa0aRJUurpII/giphy.gif', // Bell ringing
-            'https://media.giphy.com/media/Ob7p7lDT99cd2/giphy.gif', // Septa Unella
-            'https://media.giphy.com/media/unQ3IJU2RG7DO/giphy.gif', // Another clean one
-        ];
-
-        let imageUrl = cleanShameGifs[Math.floor(Math.random() * cleanShameGifs.length)];
+        // FORCE ONLY THE SHAME GIF - NO RANDOM BULLSHIT
+        const imageUrl = 'https://media.giphy.com/media/Ob7p7lDT99cd2/giphy.gif';
         
         // Optional: Still try GIPHY API as backup
-        if (process.env.GIPHY_API_KEY) {
-            try {
-                const response = await fetch(`https://api.giphy.com/v1/gifs/search?q=shame%20bell%20game%20of%20thrones&api_key=${process.env.GIPHY_API_KEY}&limit=20&rating=pg-13`);
-                const data = await response.json();
-                
-                if (data.data && data.data.length > 0) {
-                    // Filter for cleaner GIFs
-                    const cleanGifs = data.data.filter(gif => {
-                        const title = gif.title.toLowerCase();
-                        return !title.includes('text') && !title.includes('meme');
-                    });
-                    
-                    if (cleanGifs.length > 0) {
-                        const randomIndex = Math.floor(Math.random() * cleanGifs.length);
-                        imageUrl = cleanGifs[randomIndex].images.original.url;
-                    }
-                }
-            } catch (giphyError) {
-                console.error('GIPHY API error:', giphyError);
-                // Will use handpicked GIF
-            }
-        }
         
         // Create shame embed with target and reason
         const shameEmbed = new EmbedBuilder()
@@ -3452,7 +3421,7 @@ async function handleShameSlashCommand(interaction) {
         await setShameCooldown(userId);
         
         if (Math.random() < 0.1) {
-            await global.db.cleanupOldShameCooldowns();
+            await cleanupOldShameCooldowns();
         }
         
         console.log(`${interaction.user.displayName} shamed ${targetUser.displayName} in ${interaction.channel.name}${reason ? ` for: ${reason}` : ''}`);
