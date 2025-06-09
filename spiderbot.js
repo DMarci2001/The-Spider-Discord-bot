@@ -2760,7 +2760,6 @@ async function createPardonedLastMonthEmbed(guild) {
         
         const embed = new EmbedBuilder()
             .setTitle(`Pardoned Members - ${monthName} ☝️`)
-            .setDescription('Distinguished members who received clemency, categorized by reason for transparency.')
             .setColor(0x00AA55)
             .setFooter({ text: `Month key: ${lastMonthKey} • Total pardoned: ${totalPardoned}` });
         
