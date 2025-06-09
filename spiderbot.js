@@ -3186,10 +3186,11 @@ async function createPurgeListEmbed(guild) {
     let lateJoinerPardonedCount = 0;
     let protectedCount = 0;
     
-    // Process each member
+    // Process each member - REMOVED Level 5 filter
     for (const [userId, member] of allMembers) {
         try {
-            if (!hasLevel5Role(member)) continue;
+            // Skip bots
+            if (member.user.bot) continue;
             
             const monthlyCount = await getUserMonthlyFeedback(userId);
             const pardonReason = await getUserPardonReason(userId);
