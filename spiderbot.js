@@ -524,6 +524,15 @@ function getClickableRoleMentions(guild) {
     };
 }
 
+function getLastMonthKey() {
+    const now = new Date();
+    // Subtract 1 day to shift the month boundary from 1st to 2nd
+    const adjustedDate = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+    // Go back one month
+    adjustedDate.setMonth(adjustedDate.getMonth() - 1);
+    return `${adjustedDate.getFullYear()}-${adjustedDate.getMonth()}`;
+}
+
 // ===== UTILITY FUNCTIONS =====
 
 // Helper function to remove existing color roles from a user
@@ -1157,6 +1166,10 @@ const commands = [
         .setName('unpardon')
         .setDescription('Remove pardon from a member (Staff only)')
         .addUserOption(option => option.setName('user').setDescription('Member to remove pardon from').setRequired(true)),
+
+    new SlashCommandBuilder()
+    .setName('pardoned_last_month')
+    .setDescription('View all members who were pardoned last month (Staff only)'),
     
     new SlashCommandBuilder()
         .setName('setup_bookshelf')
@@ -1469,6 +1482,7 @@ async function handleCommand(message) {
             setup_bookshelf: () => handleSetupBookshelfCommand(message),
             pardon: () => handlePardonCommand(message, args),
             purge_list: () => handlePurgeListCommand(message),
+            pardoned_last_month: () => handlePardonedLastMonthSlashCommand(interaction)
         };
         
         const handler = commandHandlers[command];
@@ -2625,6 +2639,84 @@ function createPardonEmbed(user, action) {
             { name: 'Pardoned User', value: `${user.displayName}`, inline: true }
         )
         .setColor(0x00AA55);
+}
+
+async function handlePardonedLastMonthSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const embed = await createPardonedLastMonthEmbed(interaction.guild);
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function createPardonedLastMonthEmbed(guild) {
+    const lastMonthKey = getLastMonthKey();
+    
+    try {
+        const pardonedUsers = await global.db.db.all('SELECT user_id FROM pardoned_users WHERE month_key = ?', [lastMonthKey]);
+        
+        if (pardonedUsers.length === 0) {
+            return new EmbedBuilder()
+                .setTitle('No Pardons Last Month ☝️')
+                .setDescription('No members were granted clemency last month. How wonderfully compliant our community was!')
+                .setColor(0x2F3136);
+        }
+        
+        let pardonedList = '';
+        let foundMembers = 0;
+        let leftMembers = 0;
+        
+        for (const record of pardonedUsers) {
+            try {
+                const member = await guild.members.fetch(record.user_id);
+                foundMembers++;
+                if (pardonedList.length < 900) {
+                    pardonedList += `• **${member.displayName}**\n`;
+                }
+            } catch (error) {
+                leftMembers++;
+                if (pardonedList.length < 900) {
+                    pardonedList += `• *[Left Server] (${record.user_id.slice(-4)})*\n`;
+                }
+            }
+        }
+        
+        const totalPardoned = foundMembers + leftMembers;
+        
+        if (totalPardoned > 20 && pardonedList.length >= 900) {
+            const remaining = totalPardoned - 20;
+            pardonedList += `\n• *...and ${remaining} more*`;
+        }
+        
+        // Get month name for display
+        const tempDate = new Date();
+        tempDate.setMonth(tempDate.getMonth() - 1);
+        const monthName = tempDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+        
+        return new EmbedBuilder()
+            .setTitle(`Pardoned Members - ${monthName} ☝️`)
+            .setDescription('These distinguished members were granted clemency from the monthly feedback requirement during the specified period.')
+            .addFields({
+                name: `Pardoned Members (${totalPardoned})`,
+                value: pardonedList || 'None found',
+                inline: false
+            })
+            .addFields({
+                name: 'Summary',
+                value: `• **${foundMembers}** still in server\n• **${leftMembers}** have left server`,
+                inline: false
+            })
+            .setColor(0x00AA55)
+            .setFooter({ text: `Month key: ${lastMonthKey} • Pardons are granted at staff discretion` });
+            
+    } catch (error) {
+        console.error('Error fetching last month pardoned users:', error);
+        return new EmbedBuilder()
+            .setTitle('Error Retrieving Data ☝️')
+            .setDescription('I encountered difficulties accessing the historical pardon records. Perhaps the archives require maintenance?')
+            .setColor(0xFF6B6B);
+    }
 }
 
 // ===== MANUAL PURGE COMMANDS =====
