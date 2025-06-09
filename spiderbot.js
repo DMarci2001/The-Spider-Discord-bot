@@ -80,6 +80,16 @@ const STORE_ITEMS = {
         category: "color",
         levelRequired: 15
     },
+    tangerine_tango: {
+        name: "Tangerine Tango",
+        description: "A spirited orange that radiates energy and enthusiasm",
+        color: 0xDD4124,
+        price: 1,
+        emoji: "🍊",
+        year: "2012",
+        category: "color",
+        levelRequired: 15
+    },
     illuminating_yellow: {
         name: "Illuminating Yellow",
         description: "A bright, cheerful yellow that sparks optimism",
@@ -87,6 +97,15 @@ const STORE_ITEMS = {
         price: 1,
         emoji: "💛",
         year: "2021",
+        category: "color",
+        levelRequired: 15
+    },
+    teal: {
+        name: "Teal",
+        description: "A calming, serene blue-green that soothes the soul",
+        color: 0x01889F,
+        price: 1,
+        emoji: "🌊",
         category: "color",
         levelRequired: 15
     },
@@ -1064,7 +1083,7 @@ const commands = [
                 // Color roles
                 { name: '🤎 Mocha Mousse (2025) - 1 credit', value: 'mocha_mousse' },
                 { name: '🍑 Peach Fuzz (2024) - 1 credit', value: 'peach_fuzz' },
-                { name: '🔮 Magenta (2023) - 1 credit', value: 'magenta' },
+                { name: '🔮 Magenta - 1 credit', value: 'magenta' },
                 { name: '💜 Very Peri (2022) - 1 credit', value: 'very_peri' },
                 { name: '💛 Illuminating Yellow (2021) - 1 credit', value: 'illuminating_yellow' },
                 { name: '🐘 Ultimate Gray (2021) - 1 credit', value: 'ultimate_gray' },
@@ -1072,7 +1091,9 @@ const commands = [
                 { name: '🌿 Greenery (2017) - 1 credit', value: 'greenery' },
                 { name: '🍷 Marsala (2015) - 1 credit', value: 'marsala' },
                 { name: '🥂 Mimosa (2009) - 1 credit', value: 'mimosa' },
-                { name: '🌶️ Chilli Pepper (2007) - 1 credit', value: 'chilli_pepper' }
+                { name: '🌶️ Chilli Pepper (2007) - 1 credit', value: 'chilli_pepper' },
+                { name: '🌊 Teal - 1 credit', value: 'teal'},
+                { name: '🍊 Tangerine Tango (2012) - 1 credit', value: 'tangerine_tango'}
             ))
         .addIntegerOption(option => option.setName('quantity').setDescription('Quantity to purchase (only for leases)').setRequired(false).setMinValue(1).setMaxValue(50)),
     
@@ -1752,7 +1773,9 @@ function createStoreEmbed(guild) {
             'greenery': 'fresh green',
             'mimosa': 'golden yellow',
             'chilli_pepper': 'spicy red',
-            'ultimate_gray': 'neutral gray'
+            'ultimate_gray': 'neutral gray',
+            'teal': 'light blue-green',
+            'tangerine_tango': 'vibrant orange'
         };
         return `${item.emoji} **${item.name}** (${shortDescs[key]})`;
     }).join(' • ');
