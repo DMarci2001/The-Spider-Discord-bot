@@ -1481,8 +1481,7 @@ async function handleCommand(message) {
             buy: () => handleBuyCommand(message, args),
             setup_bookshelf: () => handleSetupBookshelfCommand(message),
             pardon: () => handlePardonCommand(message, args),
-            purge_list: () => handlePurgeListCommand(message),
-            pardoned_last_month: () => handlePardonedLastMonthSlashCommand(interaction)
+            purge_list: () => handlePurgeListCommand(message)
         };
         
         const handler = commandHandlers[command];
@@ -1514,6 +1513,7 @@ async function handleSlashCommand(interaction) {
         setup_bookshelf: () => handleSetupBookshelfSlashCommand(interaction),
         pardon: () => handlePardonSlashCommand(interaction),
         unpardon: () => handleUnpardonSlashCommand(interaction),
+        pardoned_last_month: () => handlePardonedLastMonthSlashCommand(interaction),
         purge_list: () => handlePurgeListSlashCommand(interaction),
         manual_purge: () => handleManualPurgeSlashCommand(interaction),
         post_server_guide: () => handlePostServerGuideSlashCommand(interaction),
