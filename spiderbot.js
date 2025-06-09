@@ -3128,7 +3128,7 @@ function createAllCommandsEmbed() {
             },
             { 
                 name: '👑 Server Administration', 
-                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Grant bookshelf access to a member\n`/pardon` - Pardon a member from monthly feedback requirement\n`/unpardon` - Remove pardon from a member\n`/purge_list` - View all members who would be purged\n`/manual_purge` - Execute manual purge of all qualifying members', 
+                value: '`/stats` - View detailed server statistics\n`/setup_bookshelf` - Grant bookshelf access to a member\n`/pardon` - Pardon a member from monthly feedback requirement\n`/unpardon` - Remove pardon from a member\n`/pardoned_last_month` - View members who were exempt from the purge last month\n`/purge_list` - View all members who would be purged\n`/manual_purge` - Execute manual purge of all qualifying members', 
                 inline: false 
             }
         )
