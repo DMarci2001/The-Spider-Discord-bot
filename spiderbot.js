@@ -891,17 +891,17 @@ async function assignColorRole(member, guild, itemKey) {
 async function isUserPardoned(userId) {
     try {
         const monthKey = getCurrentMonthKey();
-        const result = await global.db.db.get('SELECT 1 FROM pardoned_users WHERE user_id = ? AND month_key = ?', [userId, monthKey]);
-        return !!result;
+        return await global.db.isUserPardoned(userId, monthKey);
     } catch (error) {
         return false;
     }
 }
 
-async function pardonUser(userId) {
+async function pardonUser(userId, reason = 'staff_discretion') {
     const monthKey = getCurrentMonthKey();
     try {
-        await global.db.db.run('INSERT OR REPLACE INTO pardoned_users (user_id, month_key) VALUES (?, ?)', [userId, monthKey]);
+        await global.db.pardonUser(userId, monthKey, reason);
+        console.log(`Pardoned user ${userId} for reason: ${reason}`);
     } catch (error) {
         console.error('Error pardoning user:', error);
     }
@@ -2575,18 +2575,41 @@ async function handlePardonSlashCommand(interaction) {
     }
     
     const user = interaction.options.getUser('user');
+    const member = interaction.guild.members.cache.get(user.id);
     
-    if (await isUserPardoned(user.id)) { // Add await
+    if (await isUserPardoned(user.id)) {
+        const currentReason = await getUserPardonReason(user.id);
         const embed = new EmbedBuilder()
             .setTitle('Already Pardoned ☝️')
-            .setDescription('I regret to inform you that this distinguished member has already been granted clemency for this month\'s requirements.')
+            .setDescription(`I regret to inform you that this distinguished member has already been granted clemency for this month's requirements.`)
+            .addFields({
+                name: 'Current Pardon Reason',
+                value: currentReason === 'late_joiner' ? '🕐 Late Joiner (Last Week)' : '👑 Staff Discretion',
+                inline: true
+            })
             .setColor(0xFF9900);
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    await pardonUser(user.id);
+    // Auto-detect if they're a late joiner
+    let reason = 'staff_discretion';
+    let reasonDisplay = '👑 Staff Discretion';
     
-    const embed = createPardonEmbed(user, 'granted');
+    if (member && isLateJoiner(member)) {
+        reason = 'late_joiner';
+        reasonDisplay = '🕐 Late Joiner (Last Week)';
+    }
+    
+    await pardonUser(user.id, reason);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Pardon Granted ☝️')
+        .addFields(
+            { name: 'Pardoned User', value: `${user.displayName}`, inline: true },
+            { name: 'Pardon Type', value: reasonDisplay, inline: true }
+        )
+        .setColor(0x00AA55);
+    
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
@@ -2598,10 +2621,10 @@ async function handleUnpardonSlashCommand(interaction) {
     const user = interaction.options.getUser('user');
     
     try {
-        // Check if user is actually pardoned first
-        const isPardoned = await isUserPardoned(user.id);
+        // Check if user is actually pardoned first and get the reason
+        const currentReason = await getUserPardonReason(user.id);
         
-        if (!isPardoned) {
+        if (!currentReason) {
             const embed = new EmbedBuilder()
                 .setTitle('No Pardon Found ☝️')
                 .setDescription('This member currently holds no pardon for this month\'s requirements.')
@@ -2610,16 +2633,27 @@ async function handleUnpardonSlashCommand(interaction) {
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
         }
         
-        // Remove the pardon using the same method that adds it
+        // Remove the pardon
         const monthKey = getCurrentMonthKey();
-        await global.db.db.run('DELETE FROM pardoned_users WHERE user_id = ? AND month_key = ?', [user.id, monthKey]);
+        const success = await global.db.removePardon(user.id, monthKey);
         
-        const embed = new EmbedBuilder()
-            .setTitle('Pardon Revoked ☝️')
-            .setDescription(`The clemency previously granted to **${user.displayName}** has been rescinded.`)
-            .setColor(0xFF6B6B);
-        
-        await replyTemporary(interaction, { embeds: [embed] });
+        if (success) {
+            const reasonDisplay = currentReason === 'late_joiner' ? '🕐 Late Joiner (Last Week)' : '👑 Staff Discretion';
+            
+            const embed = new EmbedBuilder()
+                .setTitle('Pardon Revoked ☝️')
+                .setDescription(`The clemency previously granted to **${user.displayName}** has been rescinded.`)
+                .addFields({
+                    name: 'Previous Pardon Type',
+                    value: reasonDisplay,
+                    inline: true
+                })
+                .setColor(0xFF6B6B);
+            
+            await replyTemporary(interaction, { embeds: [embed] });
+        } else {
+            throw new Error('Failed to remove pardon from database');
+        }
         
     } catch (error) {
         console.error('Full unpardon error:', error);
@@ -2654,7 +2688,7 @@ async function createPardonedLastMonthEmbed(guild) {
     const lastMonthKey = getLastMonthKey();
     
     try {
-        const pardonedUsers = await global.db.db.all('SELECT user_id FROM pardoned_users WHERE month_key = ?', [lastMonthKey]);
+        const pardonedUsers = await global.db.getPardonedUsersForMonth(lastMonthKey);
         
         if (pardonedUsers.length === 0) {
             return new EmbedBuilder()
@@ -2663,30 +2697,60 @@ async function createPardonedLastMonthEmbed(guild) {
                 .setColor(0x2F3136);
         }
         
-        let pardonedList = '';
-        let foundMembers = 0;
-        let leftMembers = 0;
+        let staffPardonedList = '';
+        let lateJoinerList = '';
+        let staffCount = 0;
+        let lateJoinerCount = 0;
+        let leftMembersStaff = 0;
+        let leftMembersLate = 0;
         
         for (const record of pardonedUsers) {
             try {
                 const member = await guild.members.fetch(record.user_id);
-                foundMembers++;
-                if (pardonedList.length < 900) {
-                    pardonedList += `• **${member.displayName}**\n`;
+                const memberEntry = `• **${member.displayName}**\n`;
+                
+                if (record.reason === 'late_joiner') {
+                    lateJoinerCount++;
+                    if (lateJoinerList.length < 800) {
+                        lateJoinerList += memberEntry;
+                    }
+                } else {
+                    staffCount++;
+                    if (staffPardonedList.length < 800) {
+                        staffPardonedList += memberEntry;
+                    }
                 }
             } catch (error) {
-                leftMembers++;
-                if (pardonedList.length < 900) {
-                    pardonedList += `• *[Left Server] (${record.user_id.slice(-4)})*\n`;
+                // Member has left the server
+                const memberEntry = `• *[Left Server] (${record.user_id.slice(-4)})*\n`;
+                
+                if (record.reason === 'late_joiner') {
+                    leftMembersLate++;
+                    if (lateJoinerList.length < 800) {
+                        lateJoinerList += memberEntry;
+                    }
+                } else {
+                    leftMembersStaff++;
+                    if (staffPardonedList.length < 800) {
+                        staffPardonedList += memberEntry;
+                    }
                 }
             }
         }
         
-        const totalPardoned = foundMembers + leftMembers;
+        const totalStaff = staffCount + leftMembersStaff;
+        const totalLate = lateJoinerCount + leftMembersLate;
+        const totalPardoned = totalStaff + totalLate;
         
-        if (totalPardoned > 20 && pardonedList.length >= 900) {
-            const remaining = totalPardoned - 20;
-            pardonedList += `\n• *...and ${remaining} more*`;
+        // Add "and X more" if lists were truncated
+        if (totalStaff > 15 && staffPardonedList.length >= 800) {
+            const remaining = totalStaff - 15;
+            staffPardonedList += `• *...and ${remaining} more*\n`;
+        }
+        
+        if (totalLate > 15 && lateJoinerList.length >= 800) {
+            const remaining = totalLate - 15;
+            lateJoinerList += `• *...and ${remaining} more*\n`;
         }
         
         // Get month name for display
@@ -2694,20 +2758,36 @@ async function createPardonedLastMonthEmbed(guild) {
         tempDate.setMonth(tempDate.getMonth() - 1);
         const monthName = tempDate.toLocaleString('default', { month: 'long', year: 'numeric' });
         
-        return new EmbedBuilder()
+        const embed = new EmbedBuilder()
             .setTitle(`Pardoned Members - ${monthName} ☝️`)
-            .addFields({
-                name: `Pardoned Members (${totalPardoned})`,
-                value: pardonedList || 'None found',
-                inline: false
-            })
-            .addFields({
-                name: 'Summary',
-                value: `• **${foundMembers}** still in server\n• **${leftMembers}** have left server`,
-                inline: false
-            })
+            .setDescription('Distinguished members who received clemency, categorized by reason for transparency.')
             .setColor(0x00AA55)
-            .setFooter({ text: `Month key: ${lastMonthKey} • Pardons are granted at staff discretion` });
+            .setFooter({ text: `Month key: ${lastMonthKey} • Total pardoned: ${totalPardoned}` });
+        
+        // Only add fields if there are members in each category
+        if (totalStaff > 0) {
+            embed.addFields({
+                name: `👑 Staff Discretion Pardons (${totalStaff})`,
+                value: staffPardonedList || '• None',
+                inline: false
+            });
+        }
+        
+        if (totalLate > 0) {
+            embed.addFields({
+                name: `🕐 Late Joiner Pardons (${totalLate})`,
+                value: lateJoinerList || '• None',
+                inline: false
+            });
+        }
+        
+        embed.addFields({
+            name: 'Summary',
+            value: `• **${staffCount}** staff pardons (${leftMembersStaff} left server)\n• **${lateJoinerCount}** late joiner pardons (${leftMembersLate} left server)\n• **${totalPardoned}** total pardons granted`,
+            inline: false
+        });
+        
+        return embed;
             
     } catch (error) {
         console.error('Error fetching last month pardoned users:', error);
@@ -2715,6 +2795,36 @@ async function createPardonedLastMonthEmbed(guild) {
             .setTitle('Error Retrieving Data ☝️')
             .setDescription('I encountered difficulties accessing the historical pardon records. Perhaps the archives require maintenance?')
             .setColor(0xFF6B6B);
+    }
+}
+
+function isLateJoiner(member) {
+    if (!member.joinedAt) return false;
+    
+    const now = new Date();
+    // Adjust for month boundary (subtract 1 day to shift from 1st to 2nd)
+    const adjustedNow = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+    
+    // Get the last day of the current month
+    const lastDayOfMonth = new Date(adjustedNow.getFullYear(), adjustedNow.getMonth() + 1, 0);
+    
+    // Calculate 7 days before the last day of the month
+    const oneWeekBeforeEnd = new Date(lastDayOfMonth.getTime() - (7 * 24 * 60 * 60 * 1000));
+    
+    // Check if they joined after oneWeekBeforeEnd
+    const joinedInLastWeek = member.joinedAt >= oneWeekBeforeEnd;
+    
+    console.log(`Late joiner check for ${member.displayName}: joined ${member.joinedAt.toDateString()}, last week starts ${oneWeekBeforeEnd.toDateString()}, result: ${joinedInLastWeek}`);
+    
+    return joinedInLastWeek;
+}
+
+async function getUserPardonReason(userId) {
+    try {
+        const monthKey = getCurrentMonthKey();
+        return await global.db.getUserPardonReason(userId, monthKey);
+    } catch (error) {
+        return null;
     }
 }
 
@@ -2912,33 +3022,39 @@ async function createStatsEmbed(guild) {
     let monthlyContributors = 0;
     let fulfillmentList = '';
     let nonFulfillmentList = '';
-    let pardonedList = '';
-    let pardonedCount = 0;
+    let staffPardonedList = '';
+    let lateJoinerPardonedList = '';
+    let staffPardonedCount = 0;
+    let lateJoinerPardonedCount = 0;
     
     // Process each member
     for (const [userId, member] of level5Members) {
         const monthlyCount = await getUserMonthlyFeedback(userId);
-        const isPardoned = await isUserPardoned(userId);
+        const pardonReason = await getUserPardonReason(userId);
         const status = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅' : '❌';
         
-        // FIXED LOGIC: Check requirement first, then pardon
         if (monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT) {
             monthlyContributors++;
             fulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
-        } else if (isPardoned) {
-            pardonedCount++;
-            pardonedList += `${status} **${member.displayName}** (${monthlyCount}) - *Pardoned*\n`;
+        } else if (pardonReason === 'staff_discretion') {
+            staffPardonedCount++;
+            staffPardonedList += `${status} **${member.displayName}** (${monthlyCount}) - *Staff Pardon*\n`;
+        } else if (pardonReason === 'late_joiner') {
+            lateJoinerPardonedCount++;
+            lateJoinerPardonedList += `${status} **${member.displayName}** (${monthlyCount}) - *Late Joiner*\n`;
         } else {
             nonFulfillmentList += `${status} **${member.displayName}** (${monthlyCount})\n`;
         }
     }
     
+    const totalPardoned = staffPardonedCount + lateJoinerPardonedCount;
     const contributionRate = totalLevel5 > 0 ? Math.round((monthlyContributors / totalLevel5) * 100) : 0;
     
     // Combine all level 5 member details
     let level5Details = '';
     if (fulfillmentList) level5Details += fulfillmentList;
-    if (pardonedList) level5Details += pardonedList;
+    if (staffPardonedList) level5Details += staffPardonedList;
+    if (lateJoinerPardonedList) level5Details += lateJoinerPardonedList;
     if (nonFulfillmentList) level5Details += nonFulfillmentList;
     
     if (!level5Details) level5Details = `• No **Level 5** members found`;
@@ -2954,8 +3070,17 @@ async function createStatsEmbed(guild) {
             { name: 'Active Contributors This Month', value: `${monthlyContributors} writers`, inline: true },
             { name: 'Monthly Participation Rate', value: `${contributionRate}%`, inline: true },
             { name: 'Community Health', value: contributionRate >= 70 ? '✅ Flourishing' : contributionRate >= 50 ? '⚠️ Moderate' : '🔴 Requires attention', inline: true },
-            { name: 'Pardoned This Month', value: `${pardonedCount} members`, inline: true },
-            { name: 'Overview', value: `• **${totalLevel5}** total **Level 5** members\n• **${monthlyContributors}** meeting requirements\n• **${pardonedCount}** pardoned this month`, inline: false },
+            { name: 'Total Pardoned This Month', value: `${totalPardoned} members`, inline: true },
+            { 
+                name: 'Pardon Breakdown', 
+                value: `• **${staffPardonedCount}** staff discretion\n• **${lateJoinerPardonedCount}** late joiners`, 
+                inline: false 
+            },
+            { 
+                name: 'Overview', 
+                value: `• **${totalLevel5}** total **Level 5** members\n• **${monthlyContributors}** meeting requirements\n• **${totalPardoned}** pardoned this month`, 
+                inline: false 
+            },
             { name: 'Detailed Status', value: level5Details, inline: false }
         )
         .setColor(contributionRate >= 70 ? 0x00AA55 : contributionRate >= 50 ? 0xFF9900 : 0xFF4444)
@@ -3053,54 +3178,91 @@ async function createPurgeListEmbed(guild) {
     const roles = getClickableRoleMentions(guild);
     
     let purgeList = '';
-    let pardonedList = '';
+    let staffPardonedList = '';
+    let lateJoinerPardonedList = '';
     let protectedList = '';
     let purgeCount = 0;
-    let pardonedCount = 0;
+    let staffPardonedCount = 0;
+    let lateJoinerPardonedCount = 0;
     let protectedCount = 0;
     
-    // Process each member - need to handle async calls
+    // Process each member
     for (const [userId, member] of allMembers) {
         try {
+            if (!hasLevel5Role(member)) continue;
+            
             const monthlyCount = await getUserMonthlyFeedback(userId);
-            const isPardoned = await isUserPardoned(userId);
+            const pardonReason = await getUserPardonReason(userId);
             const meetingRequirement = monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT;
             const isProtected = isProtectedFromPurge(member);
             
-            if (!meetingRequirement && !isPardoned && !isProtected) {
+            if (!meetingRequirement && !pardonReason && !isProtected) {
                 // Would be purged
                 purgeCount++;
-                if (purgeList.length < 900) { // Leave room for truncation message
+                if (purgeList.length < 900) {
                     purgeList += `❌ **${member.displayName}** (${monthlyCount} credits)\n`;
                 }
-            } else if (!meetingRequirement && isPardoned) {
-                // Pardoned from purge
-                pardonedCount++;
-                if (pardonedList.length < 900) { // Leave room for truncation message
-                    pardonedList += `✅ **${member.displayName}** (${monthlyCount} credits)\n`;
+            } else if (!meetingRequirement && pardonReason === 'staff_discretion') {
+                // Staff pardoned from purge
+                staffPardonedCount++;
+                if (staffPardonedList.length < 900) {
+                    staffPardonedList += `👑 **${member.displayName}** (${monthlyCount} credits)\n`;
+                }
+            } else if (!meetingRequirement && pardonReason === 'late_joiner') {
+                // Late joiner pardoned from purge
+                lateJoinerPardonedCount++;
+                if (lateJoinerPardonedList.length < 900) {
+                    lateJoinerPardonedList += `🕐 **${member.displayName}** (${monthlyCount} credits)\n`;
                 }
             } else if (!meetingRequirement && isProtected) {
                 // Protected from purge
                 protectedCount++;
-                if (protectedList.length < 900) { // Leave room for truncation message
+                if (protectedList.length < 900) {
                     protectedList += `🛡️ **${member.displayName}** (${monthlyCount} credits) - Staff\n`;
                 }
             }
         } catch (error) {
             console.error(`Error processing member ${member.displayName}:`, error);
-            continue; // Skip this member and continue with others
+            continue;
         }
     }
+    
+    const totalPardoned = staffPardonedCount + lateJoinerPardonedCount;
     
     const embed = new EmbedBuilder()
         .setTitle('Monthly Purge List ☝️')
         .setDescription('Do not be alarmed, my liege. This list merely reflects the current status quo, but it is subject to change, depending on the actions of our noble writers.')
         .addFields(
-            { name: `🔥 To be Purged (${purgeCount})`, value: purgeList, inline: false },
-            { name: `🛡️ Pardoned from Purge (${pardonedCount})`, value: pardonedList, inline: false },
-            { name: 'Notes', value: `• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, inline: false }
+            { name: `🔥 To be Purged (${purgeCount})`, value: purgeList || '• None scheduled for purge', inline: false }
         )
         .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
+    
+    // Only add pardon sections if there are pardoned members
+    if (staffPardonedCount > 0) {
+        embed.addFields(
+            { name: `👑 Staff Pardons (${staffPardonedCount})`, value: staffPardonedList, inline: false }
+        );
+    }
+    
+    if (lateJoinerPardonedCount > 0) {
+        embed.addFields(
+            { name: `🕐 Late Joiner Pardons (${lateJoinerPardonedCount})`, value: lateJoinerPardonedList, inline: false }
+        );
+    }
+    
+    if (protectedCount > 0) {
+        embed.addFields(
+            { name: `🛡️ Protected from Purge (${protectedCount})`, value: protectedList, inline: false }
+        );
+    }
+    
+    embed.addFields(
+        { 
+            name: 'Summary', 
+            value: `• **${purgeCount}** members to be purged\n• **${totalPardoned}** pardoned (${staffPardonedCount} staff, ${lateJoinerPardonedCount} late joiners)\n• **${protectedCount}** protected staff\n• **Monthly minimum:** ${MONTHLY_FEEDBACK_REQUIREMENT} credit${MONTHLY_FEEDBACK_REQUIREMENT !== 1 ? 's' : ''}`, 
+            inline: false 
+        }
+    );
     
     return embed;
 }
