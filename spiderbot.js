@@ -492,21 +492,21 @@ function getClickableChannelMentions(guild) {
         bookshelfFeedback: getChannelMention(guild, 'bookshelf-feedback'),
         bookshelfDiscussion: getChannelMention(guild, 'bookshelf-discussion'),
         bookshelf: getChannelMention(guild, 'bookshelf'),
-        rulesChannel: getChannelMention(guild, 'rules'),
-        serverGuideChannel: getChannelMention(guild, 'server-guide'),
-        botStuff: getChannelMention(guild, 'bot-stuff'),
-        reactionRoles: getChannelMention(guild, 'reaction-roles'),
-        announcements: getChannelMention(guild, 'announcements'),
-        introductions: getChannelMention(guild, 'introductions'),
-        bump: getChannelMention(guild, 'bump'),
-        ticket: getChannelMention(guild, 'ticket'),
-        writingChat: getChannelMention(guild, 'writing-chat'),
-        writingHelp: getChannelMention(guild, 'writing-help'),
-        onePageCritique: getChannelMention(guild, 'one-page-critique'),
-        snippetShowcase: getChannelMention(guild, 'snippet-showcase'),
-        bookshelfMemes: getChannelMention(guild, 'bookshelf-memes'),
-        aiArt: getChannelMention(guild, 'ai-art'),
-        triggered: getChannelMention(guild, 'triggered'),
+        rulesChannel: getChannelMention(guild, '📜╠rules'),
+        serverGuideChannel: getChannelMention(guild, '🗺╠server-guide'),
+        botStuff: getChannelMention(guild, '🐤╠bot-stuff'),
+        reactionRoles: getChannelMention(guild, '👑╠reaction-roles'),
+        announcements: getChannelMention(guild, '📢╠announcements'),
+        introductions: getChannelMention(guild, '👋╠introductions'),
+        bump: getChannelMention(guild, '🐉╠bump'),
+        ticket: getChannelMention(guild, '🎫╠ticket'),
+        writingChat: getChannelMention(guild, '📝╠writing-chat'),
+        writingHelp: getChannelMention(guild, '🤝╠writing-help'),
+        onePageCritique: getChannelMention(guild, '🔎╠one-page-critique'),
+        snippetShowcase: getChannelMention(guild, '💎╠snippet-showcase'),
+        bookshelfMemes: getChannelMention(guild, '🤓╠bookshelf-memes'),
+        aiArt: getChannelMention(guild, '⚡╠ai-art'),
+        triggered: getChannelMention(guild, '💢╠triggered'),
     };
 }
 
@@ -2095,7 +2095,7 @@ async function postServerGuide(channel) {
                     inline: false
                 },
                 {
-                    name: '☕ Everyday Matters',
+                    name: '🍺 Everyday Matters',
                     value: '• Quarters for discussion concerning daily life, hobbies, and interests',
                     inline: false
                 },
@@ -2105,7 +2105,7 @@ async function postServerGuide(channel) {
                     inline: false
                 },
                 {
-                    name: '🎭 Entertainment',
+                    name: '🎪 Entertainment',
                     value: `${channels.triggered} - Use a popular pictogram to share your most controversial writing opinions\n${channels.bookshelfMemes} - Share humorous jests about the works of your fellow scribes`,
                 },
                 {
