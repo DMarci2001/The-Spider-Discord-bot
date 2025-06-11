@@ -2100,7 +2100,7 @@ async function postServerGuide(channel) {
                     inline: false
                 },
                 {
-                    name: '🖋 Scriptorium',
+                    name: '✍️ Scriptorium',
                     value: `${channels.writingChat} - General discourse on the craft\n${channels.writingHelp} - Here, our community provides guidance in your literary questions\n${channels.onePageCritique} - Submit short excerpts for detailed feedback\n${channels.snippetShowcase} - Display your finest work for admiration`,
                     inline: false
                 },
