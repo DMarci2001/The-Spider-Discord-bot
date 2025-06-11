@@ -2105,7 +2105,7 @@ async function postServerGuide(channel) {
                     inline: false
                 },
                 {
-                    name: '🎭 Further Entertainment',
+                    name: '🎭 Entertainment',
                     value: `${channels.triggered} - Use a popular pictogram to share your most controversial writing opinions\n${channels.bookshelfMemes} - Share humorous jests about the works of your fellow scribes`,
                 },
                 {
