@@ -2090,8 +2090,8 @@ async function postServerGuide(channel) {
                     inline: false
                 },
                 {
-                    name: '🏰 The Courts',
-                    value: `${channels.ticket} - Private counsel with our esteemed staff\n${channels.botStuff} - My own domain. I advise you to take advantage of the \`/help\` command, so you can learn more about the server's inner workings`,
+                    name: '🏰 Courts',
+                    value: `${channels.ticket} - Private counsel with our esteemed staff\n${channels.botStuff} - I advise you to take advantage of the \`/help\` command, so you can learn more about the server's inner workings`,
                     inline: false
                 },
                 {
