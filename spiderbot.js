@@ -2095,7 +2095,7 @@ async function postServerGuide(channel) {
                     inline: false
                 },
                 {
-                    name: '🍺 Everyday Matters',
+                    name: '🍺 The Tavern',
                     value: '• Quarters for discussion concerning daily life, hobbies, and interests',
                     inline: false
                 },
