@@ -1,6 +1,10 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes } = require('discord.js');
 const fs = require('fs').promises;
+const DatabaseManager = require('./database');
+
+// ===== MESSAGE DELETION TIMEOUT CONFIGURATION =====
+const MESSAGE_DELETE_TIMEOUT = 300000; // 5 minutes
 
 // ===== BOT SETUP =====
 const client = new Client({
@@ -12,62 +16,357 @@ const client = new Client({
     ]
 });
 
-// ===== CONSTANTS =====
-const STORE_ITEMS = {
-    shelf: {
-        name: "Bookshelf Access",
-        description: "Grants you the ability to post messages in the #bookshelf forum and assigns reader role",
-        price: 200,
-        role: "Shelf Owner",
-        emoji: "📚"
+// ===== ENHANCED ECONOMIC CONSTANTS =====
+const FEEDBACK_TYPES = {
+    comment: {
+        name: "Inline Comments",
+        description: "Comments within the Google Doc chapter",
+        baseCredits: 1,
+        emoji: "💬",
+        requiresContext: false,
+        abbreviation: "COM"
+    },
+    document: {
+        name: "Document Feedback", 
+        description: "Comprehensive feedback in separate document",
+        baseCredits: 3,
+        emoji: "📄",
+        requiresContext: true,
+        abbreviation: "DOC"
     }
 };
 
-const ALLOWED_FEEDBACK_THREADS = ['bookshelf-feedback', 'bookshelf-discussion'];
-const MONTHLY_FEEDBACK_REQUIREMENT = 2;
-const MINIMUM_FEEDBACK_FOR_SHELF = 2;
-const DINARS_PER_FEEDBACK = 100;
+const CHAPTER_MULTIPLIERS = {
+    early: { range: [1, 2], multiplier: 1.0, name: "Early Chapters" },
+    developing: { range: [3, 5], multiplier: 1.25, name: "Developing Story" },
+    established: { range: [6, 10], multiplier: 1.5, name: "Established Series" },
+    epic: { range: [11, 25], multiplier: 1.75, name: "Epic Saga" },
+    maximum: { range: [26, Infinity], multiplier: 1.75, name: "Maximum Reached" }
+};
 
-// ===== DATA STORAGE =====
-let monthlyFeedback = {};
-let userData = {};
-let loggedFeedbackMessages = {}; // Track which messages have had feedback logged
+const QUALITY_MULTIPLIERS = {
+    1: { multiplier: 0.8, name: "Needs Improvement", emoji: "⭐" },
+    2: { multiplier: 1.0, name: "Helpful", emoji: "⭐⭐" },
+    3: { multiplier: 1.3, name: "Very Helpful", emoji: "⭐⭐⭐" },
+    4: { multiplier: 1.5, name: "Exceptional", emoji: "⭐⭐⭐⭐" }
+};
+
+const STORE_ITEMS = {
+    shelf: {
+        name: "Bookshelf Access",
+        description: "Grants access to post in the bookshelf forum",
+        price: 15, // CHANGED: From 18 to 15
+        role: "Shelf Owner",
+        emoji: "📚",
+        category: "access"
+    },
+    lease: {
+        name: "Chapter Lease",
+        description: "Allows you to post one chapter",
+        price: 3,
+        emoji: "📝",
+        allowQuantity: true,
+        category: "utility"
+    },
+    // REMOVED: word_spotlight, priority_feedback, critique_shield, summary_boost
+    
+    // Keep color roles as-is
+    mocha_mousse: {
+        name: "Mocha Mousse",
+        description: "Warm brown elegance",
+        color: 0xA47864,
+        price: 12,
+        emoji: "🤎",
+        category: "color",
+        levelRequired: 15
+    },
+    peach_fuzz: {
+        name: "Peach Fuzz", 
+        description: "Soft peach warmth",
+        color: 0xFFBE98,
+        price: 12,
+        emoji: "🍑",
+        category: "color",
+        levelRequired: 15
+    },
+    magenta: {
+        name: "Magenta",
+        description: "Bold purple vigor",
+        color: 0xFF00FF,
+        price: 12,
+        emoji: "🔮",
+        category: "color",
+        levelRequired: 15
+    },
+    very_peri: {
+        name: "Very Peri",
+        description: "Periwinkle blue sophistication", 
+        color: 0x6667AB,
+        price: 12,
+        emoji: "💜",
+        category: "color",
+        levelRequired: 15
+    }
+};
+
+const ACCESS_REQUIREMENTS = {
+    bookshelf: {
+        level: 5,
+        credits: 15, // CHANGED: From 18 to 15
+        feedbackRequired: 2
+    },
+    readForRead: {
+        totalFeedback: 20,
+        level: null
+    },
+    completeDrafts: {
+        level: 35,
+        totalFeedback: 20
+    }
+};
+
+const MONTHLY_REQUIREMENTS = {
+    docFeedbacks: 2,
+    commentFeedbacks: 6,
+    mixedOption: { docs: 1, comments: 3 }
+};
+
+const ALLOWED_FEEDBACK_THREADS = ['bookshelf-feedback', 'bookshelf-discussion'];
+const MONITORED_FORUMS = ['bookshelf-feedback', 'bookshelf-discussion', 'bookshelf'];
+const ACTIVITY_MONITOR_CHANNEL = 'activity-monitor';
+
+// Welcome system configuration
+const WELCOME_CONFIG = {
+    channelNames: ['welcome', 'general', 'arrivals'],
+    categoryNames: ['welcome', 'general'],
+    embed: {
+        color: 0x5865F2,
+        title: 'Welcome to Type&Draft! ☝️',
+        thumbnail: true,
+        timestamp: true,
+        footer: true
+    }
+};
 
 // ===== UTILITY FUNCTIONS =====
 function getCurrentMonthKey() {
     const now = new Date();
-    return `${now.getFullYear()}-${now.getMonth()}`;
+    const adjustedDate = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+    return `${adjustedDate.getFullYear()}-${adjustedDate.getMonth()}`;
 }
 
-function getUserMonthlyFeedback(userId) {
-    const monthKey = getCurrentMonthKey();
-    if (!monthlyFeedback[userId]) monthlyFeedback[userId] = {};
-    return Math.max(0, monthlyFeedback[userId][monthKey] || 0);
+function getLastMonthKey() {
+    const now = new Date();
+    const adjustedDate = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+    adjustedDate.setMonth(adjustedDate.getMonth() - 1);
+    return `${adjustedDate.getFullYear()}-${adjustedDate.getMonth()}`;
 }
 
-function setUserMonthlyFeedback(userId, count) {
+function calculateChapterMultiplier(chapterNumber) {
+    for (const [key, tier] of Object.entries(CHAPTER_MULTIPLIERS)) {
+        if (chapterNumber >= tier.range[0] && chapterNumber <= tier.range[1]) {
+            return { multiplier: tier.multiplier, tier: tier.name };
+        }
+    }
+    return { multiplier: 1.75, tier: "Maximum Reached" };
+}
+
+function calculateFeedbackCredits(feedbackType, chapterNumber = 1, qualityMultiplier = 1.0) {
+    const baseCredits = FEEDBACK_TYPES[feedbackType].baseCredits;
+    const { multiplier: chapterMultiplier } = calculateChapterMultiplier(chapterNumber);
+    
+    return Math.ceil(baseCredits * chapterMultiplier * qualityMultiplier);
+}
+
+async function getUserData(userId) {
+    try {
+        const userRecord = await global.db.db.get('SELECT * FROM users WHERE user_id = ?', [userId]);
+        const purchaseRecords = await global.db.db.all('SELECT item FROM user_purchases WHERE user_id = ?', [userId]);
+        const purchases = purchaseRecords ? purchaseRecords.map(p => p.item) : [];
+        
+        if (!userRecord) {
+            return {
+                totalFeedbackAllTime: 0,
+                currentCredits: 0,
+                chapterLeases: 0,
+                purchases: [],
+                bookshelfPosts: 0,
+                qualityRatings: { total: 0, sum: 0, average: 2.0 },
+                lastActive: Date.now(),
+                joinDate: Date.now()
+            };
+        }
+        
+        return {
+            totalFeedbackAllTime: userRecord.total_feedback_all_time || 0,
+            currentCredits: userRecord.current_credits || 0,
+            chapterLeases: userRecord.chapter_leases || 0,
+            purchases: purchases,
+            bookshelfPosts: userRecord.bookshelf_posts || 0,
+            qualityRatings: userRecord.quality_ratings ? 
+                JSON.parse(userRecord.quality_ratings) : { total: 0, sum: 0, average: 2.0 },
+            lastActive: userRecord.last_active || Date.now(),
+            joinDate: userRecord.join_date || Date.now()
+        };
+    } catch (error) {
+        console.error('Error getting user data:', error);
+        return {
+            totalFeedbackAllTime: 0,
+            currentCredits: 0,
+            chapterLeases: 0,
+            purchases: [],
+            bookshelfPosts: 0,
+            qualityRatings: { total: 0, sum: 0, average: 2.0 },
+            lastActive: Date.now(),
+            joinDate: Date.now()
+        };
+    }
+}
+
+async function updateUserData(userId, updates) {
+    const fields = [];
+    const values = [];
+    
+    if (updates.totalFeedbackAllTime !== undefined) {
+        fields.push('total_feedback_all_time = ?');
+        values.push(updates.totalFeedbackAllTime);
+    }
+    if (updates.currentCredits !== undefined) {
+        fields.push('current_credits = ?');
+        values.push(updates.currentCredits);
+    }
+    if (updates.chapterLeases !== undefined) {
+        fields.push('chapter_leases = ?');
+        values.push(updates.chapterLeases);
+    }
+    if (updates.bookshelfPosts !== undefined) {
+        fields.push('bookshelf_posts = ?');
+        values.push(updates.bookshelfPosts);
+    }
+    if (updates.qualityRatings !== undefined) {
+        fields.push('quality_ratings = ?');
+        values.push(JSON.stringify(updates.qualityRatings));
+    }
+    if (updates.lastActive !== undefined) {
+        fields.push('last_active = ?');
+        values.push(updates.lastActive);
+    }
+    if (updates.joinDate !== undefined) {
+        fields.push('join_date = ?');
+        values.push(updates.joinDate);
+    }
+    
+    if (fields.length > 0) {
+        values.push(userId);
+        try {
+            const result = await global.db.db.run(`UPDATE users SET ${fields.join(', ')} WHERE user_id = ?`, values);
+            
+            if (!result || result.changes === 0) {
+                await global.db.db.run(`
+                    INSERT INTO users (user_id, total_feedback_all_time, current_credits, chapter_leases, bookshelf_posts, quality_ratings, last_active, join_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    userId, 
+                    updates.totalFeedbackAllTime || 0, 
+                    updates.currentCredits || 0, 
+                    updates.chapterLeases || 0,
+                    updates.bookshelfPosts || 0,
+                    JSON.stringify(updates.qualityRatings || { total: 0, sum: 0, average: 2.0 }),
+                    updates.lastActive || Date.now(),
+                    updates.joinDate || Date.now()
+                ]);
+            }
+        } catch (error) {
+            console.error('Error updating user data:', error);
+        }
+    }
+}
+
+async function getUserMonthlyFeedback(userId) {
     const monthKey = getCurrentMonthKey();
-    if (!monthlyFeedback[userId]) monthlyFeedback[userId] = {};
-    monthlyFeedback[userId][monthKey] = Math.max(0, count);
+    try {
+        const record = await global.db.db.get(
+            'SELECT doc_feedback_count, comment_feedback_count FROM monthly_feedback WHERE user_id = ? AND month_key = ?',
+            [userId, monthKey]
+        );
+        
+        if (!record) {
+            return { docs: 0, comments: 0 };
+        }
+        
+        return {
+            docs: record.doc_feedback_count || 0,
+            comments: record.comment_feedback_count || 0
+        };
+    } catch (error) {
+        return { docs: 0, comments: 0 };
+    }
+}
+
+async function setUserMonthlyFeedback(userId, feedbackType, count) {
+    const monthKey = getCurrentMonthKey();
+    const field = feedbackType === 'document' ? 'doc_feedback_count' : 'comment_feedback_count';
+    
+    try {
+        const existing = await global.db.db.get(
+            'SELECT * FROM monthly_feedback WHERE user_id = ? AND month_key = ?',
+            [userId, monthKey]
+        );
+        
+        if (existing) {
+            await global.db.db.run(
+                `UPDATE monthly_feedback SET ${field} = ? WHERE user_id = ? AND month_key = ?`,
+                [count, userId, monthKey]
+            );
+        } else {
+            const docCount = feedbackType === 'document' ? count : 0;
+            const commentCount = feedbackType === 'comment' ? count : 0;
+            
+            await global.db.db.run(
+                'INSERT INTO monthly_feedback (user_id, month_key, doc_feedback_count, comment_feedback_count) VALUES (?, ?, ?, ?)',
+                [userId, monthKey, docCount, commentCount]
+            );
+        }
+    } catch (error) {
+        console.error('Error setting monthly feedback:', error);
+    }
 }
 
 function hasLevel5Role(member) {
-    if (!member?.roles?.cache) {
-        console.log('Invalid member object');
-        return false;
-    }
+    if (!member?.roles?.cache) return false;
     
-    const hasRole = member.roles.cache.some(role => {
+    return member.roles.cache.some(role => {
         if (role.name === 'Level 5') return true;
         if (role.name.startsWith('Level ')) {
             const level = parseInt(role.name.split(' ')[1]);
-            return level >= 15; // Level 15+ includes Level 5 privileges
+            return level >= 5;
         }
         return false;
     });
+}
+
+function hasLevel15Role(member) {
+    if (!member?.roles?.cache) return false;
     
-    console.log(`${member.displayName} has Level 5+ role:`, hasRole);
-    return hasRole;
+    return member.roles.cache.some(role => {
+        if (role.name.startsWith('Level ')) {
+            const level = parseInt(role.name.split(' ')[1]);
+            return level >= 15;
+        }
+        return false;
+    });
+}
+
+function hasLevel35Role(member) {
+    if (!member?.roles?.cache) return false;
+    
+    return member.roles.cache.some(role => {
+        if (role.name.startsWith('Level ')) {
+            const level = parseInt(role.name.split(' ')[1]);
+            return level >= 35;
+        }
+        return false;
+    });
 }
 
 function hasShelfRole(member) {
@@ -75,238 +374,102 @@ function hasShelfRole(member) {
     return member.roles.cache.some(role => role.name === 'Shelf Owner');
 }
 
-function getUserData(userId) {
-    if (!userData[userId]) {
-        userData[userId] = {
-            totalFeedbackAllTime: 0,
-            dinars: 0,
-            purchases: [],
-            bookshelfPosts: 0
-        };
-    }
-    
-    const user = userData[userId];
-    // Ensure all properties exist and are correct types
-    if (!Array.isArray(user.purchases)) user.purchases = [];
-    if (typeof user.totalFeedbackAllTime !== 'number') user.totalFeedbackAllTime = 0;
-    if (typeof user.dinars !== 'number') user.dinars = 0;
-    if (typeof user.bookshelfPosts !== 'number') user.bookshelfPosts = 0;
-    
-    // Ensure no negative values
-    user.totalFeedbackAllTime = Math.max(0, user.totalFeedbackAllTime);
-    user.dinars = Math.max(0, user.dinars);
-    user.bookshelfPosts = Math.max(0, user.bookshelfPosts);
-    
-    return user;
+function hasReaderRole(member) {
+    if (!member?.roles?.cache) return false;
+    return member.roles.cache.some(role => role.name === 'reader');
 }
 
-function addDinars(userId, amount) {
-    const user = getUserData(userId);
-    const validAmount = Math.max(0, Math.floor(amount));
-    user.dinars += validAmount;
-    console.log(`Added ${validAmount} dinars to ${userId}, new balance: ${user.dinars}`);
-    return user.dinars;
+function canCreateBookshelfThread(member) {
+    return hasShelfRole(member) && hasReaderRole(member);
 }
 
-function spendDinars(userId, amount) {
-    const user = getUserData(userId);
-    const validAmount = Math.max(0, Math.floor(amount));
-    if (user.dinars >= validAmount) {
-        user.dinars -= validAmount;
-        console.log(`Spent ${validAmount} dinars for ${userId}, new balance: ${user.dinars}`);
-        return true;
-    }
-    console.log(`Insufficient dinars for ${userId}: has ${user.dinars}, needs ${validAmount}`);
+function checkMonthlyRequirement(monthlyData) {
+    const { docs, comments } = monthlyData;
+    
+    // Option 1: 2 doc feedbacks
+    if (docs >= MONTHLY_REQUIREMENTS.docFeedbacks) return true;
+    
+    // Option 2: 6 comment feedbacks  
+    if (comments >= MONTHLY_REQUIREMENTS.commentFeedbacks) return true;
+    
+    // Option 3: 1 doc + 3 comments
+    if (docs >= MONTHLY_REQUIREMENTS.mixedOption.docs && 
+        comments >= MONTHLY_REQUIREMENTS.mixedOption.comments) return true;
+    
     return false;
 }
 
-function getBookshelfAccessStatus(userId) {
-    const user = getUserData(userId);
+async function addCredits(userId, amount) {
+    const user = await getUserData(userId);
+    const validAmount = Math.max(0, Math.floor(amount));
+    const newCredits = user.currentCredits + validAmount;
     
-    if (canPostInBookshelf(userId)) {
-        return '✅ Access granted';
-    } else if (user.totalFeedbackAllTime < MINIMUM_FEEDBACK_FOR_SHELF) {
-        const needed = MINIMUM_FEEDBACK_FOR_SHELF - user.totalFeedbackAllTime;
-        return `📝 Need ${needed} more feedback${needed === 1 ? '' : 's'} to qualify for purchase`;
-    } else if (!user.purchases.includes('shelf')) {
-        return '💰 Ready to purchase shelf access (feedback requirement met)';
-    } else {
-        return '❓ Contact staff';
-    }
+    await updateUserData(userId, { 
+        currentCredits: newCredits,
+        lastActive: Date.now()
+    });
+    
+    console.log(`Added ${validAmount} credits to ${userId}, new balance: ${newCredits}`);
+    return newCredits;
 }
 
-function canPostInBookshelf(userId) {
-    const user = getUserData(userId);
-    const hasEnoughFeedback = user.totalFeedbackAllTime >= MINIMUM_FEEDBACK_FOR_SHELF;
-    const hasShelfPurchase = user.purchases.includes('shelf');
+async function spendCredits(userId, amount) {
+    const user = await getUserData(userId);
+    const validAmount = Math.max(0, Math.floor(amount));
     
-    return hasEnoughFeedback && hasShelfPurchase;
-}
-
-function canMakeNewPost(userId) {
-    const user = getUserData(userId);
-    
-    if (!canPostInBookshelf(userId)) return false;
-    
-    // Calculate available message credits
-    // Formula: total feedback - messages already posted - 1 (first message is free)
-    const availableCredits = user.totalFeedbackAllTime - user.bookshelfPosts - 1;
-    
-    console.log(`Message credit check for ${userId}: feedback=${user.totalFeedbackAllTime}, messages posted=${user.bookshelfPosts}, available credits=${availableCredits}`);
-    
-    return availableCredits >= 1;
-}
-
-function getPostCreditStatus(userId) {
-    const user = getUserData(userId);
-    
-    if (!canPostInBookshelf(userId)) {
-        return getBookshelfAccessStatus(userId);
-    }
-    
-    const messagesRemaining = user.totalFeedbackAllTime - user.bookshelfPosts - 1;
-    
-    if (messagesRemaining >= 1) {
-        return `✅ ${messagesRemaining} message${messagesRemaining === 1 ? '' : 's'} remaining`;
-    } else {
-        const needed = Math.abs(messagesRemaining) + 1;
-        return `📝 Need ${needed} more feedback to post another message`;
-    }
-}
-
-function isInAllowedFeedbackThread(channel) {
-    console.log(`Checking channel: ${channel.name}, type: ${channel.type}, isThread: ${channel.isThread()}`);
-    if (channel.parent) {
-        console.log(`Parent channel: ${channel.parent.name}`);
-    }
-    
-    // If it's a thread, check if the PARENT forum name is in allowed list
-    if (channel.isThread() && channel.parent) {
-        const parentIsAllowed = ALLOWED_FEEDBACK_THREADS.includes(channel.parent.name);
-        if (parentIsAllowed) {
-            console.log(`✅ Thread in ${channel.parent.name} forum is allowed`);
-            return true;
-        }
-    }
-    
-    // Check if it's the forum/channel itself with allowed name
-    if (ALLOWED_FEEDBACK_THREADS.includes(channel.name)) {
-        console.log(`✅ Channel/forum ${channel.name} is in allowed list`);
+    if (user.currentCredits >= validAmount) {
+        const newCredits = user.currentCredits - validAmount;
+        await updateUserData(userId, { 
+            currentCredits: newCredits,
+            lastActive: Date.now()
+        });
+        console.log(`Spent ${validAmount} credits for ${userId}, new balance: ${newCredits}`);
         return true;
     }
     
-    console.log(`❌ Channel/thread not allowed`);
+    console.log(`Insufficient credits for ${userId}: has ${user.currentCredits}, needs ${validAmount}`);
     return false;
 }
 
-function hasStaffPermissions(member) {
-    return member?.permissions?.has(PermissionFlagsBits.ManageMessages);
+async function addLeases(userId, amount) {
+    const user = await getUserData(userId);
+    const validAmount = Math.max(0, Math.floor(amount));
+    const newLeases = user.chapterLeases + validAmount;
+    
+    await updateUserData(userId, { 
+        chapterLeases: newLeases,
+        lastActive: Date.now()
+    });
+    
+    console.log(`Added ${validAmount} leases to ${userId}, new total: ${newLeases}`);
+    return newLeases;
 }
 
-function hasUserLoggedFeedbackForMessage(messageId, userId) {
-    if (!loggedFeedbackMessages[messageId]) return false;
-    return loggedFeedbackMessages[messageId].includes(userId);
-}
-
-function logFeedbackForMessage(messageId, userId) {
-    if (!loggedFeedbackMessages[messageId]) {
-        loggedFeedbackMessages[messageId] = [];
-    }
-    if (!loggedFeedbackMessages[messageId].includes(userId)) {
-        loggedFeedbackMessages[messageId].push(userId);
-    }
-}
-
-// ===== TEMPORARY MESSAGE FUNCTIONS =====
-async function sendTemporaryMessage(channel, messageOptions, delay = 1800000) {
-    try {
-        const message = await channel.send(messageOptions);
-        setTimeout(async () => {
-            try { 
-                await message.delete(); 
-            } catch (error) { 
-                console.log('Failed to delete message:', error.message); 
-            }
-        }, delay);
-        return message;
-    } catch (error) {
-        console.error('Failed to send temporary message:', error);
-        return null;
-    }
-}
-
-async function replyTemporary(interaction, messageOptions, delay = 1800000) {
-    try {
-        const message = await interaction.reply(messageOptions);
-        setTimeout(async () => {
-            try { 
-                await interaction.deleteReply(); 
-            } catch (error) { 
-                console.log('Failed to delete reply:', error.message); 
-            }
-        }, delay);
-        return message;
-    } catch (error) {
-        console.error('Failed to send temporary reply:', error);
-        return null;
-    }
-}
-
-async function replyTemporaryMessage(message, messageOptions, delay = 1800000) {
-    try {
-        const reply = await message.reply(messageOptions);
-        setTimeout(async () => {
-            try { 
-                await reply.delete(); 
-            } catch (error) { 
-                console.log('Failed to delete reply:', error.message); 
-            }
-        }, delay);
-        return reply;
-    } catch (error) {
-        console.error('Failed to send temporary message reply:', error);
-        return null;
-    }
-}
-
-// ===== DATA PERSISTENCE =====
-async function saveData() {
-    try {
-        const data = { monthlyFeedback, userData, loggedFeedbackMessages };
-        await fs.writeFile('bot_data.json', JSON.stringify(data, null, 2));
-        console.log('Data saved successfully');
-    } catch (error) {
-        console.error('Error saving data:', error);
-    }
-}
-
-async function loadData() {
-    try {
-        const data = await fs.readFile('bot_data.json', 'utf8');
-        const parsed = JSON.parse(data);
-        monthlyFeedback = parsed.monthlyFeedback || {};
-        userData = parsed.userData || {};
-        loggedFeedbackMessages = parsed.loggedFeedbackMessages || {};
+async function consumeLease(userId) {
+    const user = await getUserData(userId);
+    
+    if (user.chapterLeases > 0) {
+        const newLeases = user.chapterLeases - 1;
+        const newBookshelfPosts = user.bookshelfPosts + 1;
         
-        // Clean up data on load
-        for (const userId in userData) {
-            getUserData(userId); // This will fix any missing/invalid properties
-        }
+        await updateUserData(userId, { 
+            chapterLeases: newLeases,
+            bookshelfPosts: newBookshelfPosts,
+            lastActive: Date.now()
+        });
         
-        console.log('Data loaded successfully');
-    } catch (error) {
-        console.log('Starting with fresh data:', error.message);
-        monthlyFeedback = {};
-        userData = {};
-        loggedFeedbackMessages = {};
+        console.log(`User ${userId} consumed 1 lease. Remaining: ${newLeases}`);
+        return true;
     }
+    
+    console.log(`No leases available for ${userId}`);
+    return false;
 }
 
-// ===== SETUP FUNCTIONS =====
 async function closeUserBookshelfThreads(guild, userId) {
     try {
         const bookshelfForum = guild.channels.cache.find(channel => 
-            channel.name === 'bookshelf' && channel.type === 15 // GUILD_FORUM
+            channel.name === 'bookshelf' && channel.type === 15
         );
         
         if (!bookshelfForum) return 0;
@@ -320,7 +483,7 @@ async function closeUserBookshelfThreads(guild, userId) {
                     await thread.setArchived(true);
                     await thread.setLocked(true);
                     closedCount++;
-                    console.log(`Closed thread: ${thread.name}`);
+                    console.log(`🔒 Closed thread: ${thread.name}`);
                 } catch (error) {
                     console.log(`Failed to close thread ${thread.name}:`, error.message);
                 }
@@ -334,167 +497,569 @@ async function closeUserBookshelfThreads(guild, userId) {
     }
 }
 
-async function setupBookshelfPermissions(guild) {
+async function removeUserRoles(member, guild) {
+    const rolesToRemove = ['Shelf Owner'];
+    
+    // Also remove any color roles
+    const colorRoleNames = Object.values(STORE_ITEMS)
+        .filter(item => item.category === 'color')
+        .map(item => item.name);
+    
+    rolesToRemove.push(...colorRoleNames);
+    
+    for (const roleName of rolesToRemove) {
+        const role = guild.roles.cache.find(r => r.name === roleName);
+        if (role && member.roles.cache.has(role.id)) {
+            try {
+                await member.roles.remove(role);
+                console.log(`⚔️ Removed ${roleName} role from ${member.displayName}`);
+            } catch (error) {
+                console.log(`Failed to remove ${roleName} role:`, error.message);
+            }
+        }
+    }
+}
+
+async function resetUserProgress(userId, guild) {
+    console.log(`🗡️ Resetting all progress for user ${userId}`);
+    
+    // Clear user logged feedback
+    await global.db.clearUserLoggedFeedback(userId);
+    
+    // Close user bookshelf threads
+    const closedThreads = await closeUserBookshelfThreads(guild, userId);
+    
+    // Delete user entirely (cascades to all related data)
+    await global.db.deleteUser(userId);
+    
+    console.log(`⚔️ User ${userId} progress completely reset - ${closedThreads} threads closed`);
+    return closedThreads;
+}
+
+async function processFeedbackContribution(userId, feedbackType, chapterNumber = 1) {
+    const monthlyData = await getUserMonthlyFeedback(userId);
+    const user = await getUserData(userId);
+    
+    // Update monthly count
+    const newCount = monthlyData[feedbackType === 'document' ? 'docs' : 'comments'] + 1;
+    await setUserMonthlyFeedback(userId, feedbackType, newCount);
+    
+    // Calculate credits with quality multiplier
+    const qualityMultiplier = user.qualityRatings.total > 0 ? 
+        QUALITY_MULTIPLIERS[Math.round(user.qualityRatings.average)].multiplier : 1.0;
+    
+    const credits = calculateFeedbackCredits(feedbackType, chapterNumber, qualityMultiplier);
+    await addCredits(userId, credits);
+    
+    // Update total feedback count
+    await updateUserData(userId, {
+        totalFeedbackAllTime: user.totalFeedbackAllTime + 1,
+        lastActive: Date.now()
+    });
+    
+    const updatedMonthlyData = await getUserMonthlyFeedback(userId);
+    
+    return {
+        credits,
+        feedbackType,
+        chapterNumber,
+        monthlyData: updatedMonthlyData,
+        totalAllTime: user.totalFeedbackAllTime + 1,
+        requirementMet: checkMonthlyRequirement(updatedMonthlyData),
+        qualityMultiplier
+    };
+}
+
+// ===== CHANNEL MENTION HELPER FUNCTIONS =====
+function getChannelMention(guild, channelName) {
+    const channel = guild.channels.cache.find(ch => ch.name === channelName);
+    return channel ? `<#${channel.id}>` : `#${channelName}`;
+}
+
+function getClickableChannelMentions(guild) {
+    return {
+        bookshelfFeedback: getChannelMention(guild, 'bookshelf-feedback'),
+        bookshelfDiscussion: getChannelMention(guild, 'bookshelf-discussion'),
+        bookshelf: getChannelMention(guild, 'bookshelf'),
+        rulesChannel: getChannelMention(guild, '📜╠rules'),
+        serverGuideChannel: getChannelMention(guild, '🗺╠server-guide'),
+        botStuff: getChannelMention(guild, '🐤╠bot-stuff'),
+        reactionRoles: getChannelMention(guild, '👑╠reaction-roles'),
+        completeDrafts: getChannelMention(guild, 'complete-drafts'),
+        readForReadFinder: getChannelMention(guild, 'read-for-read-finder')
+    };
+}
+
+function getRoleMention(guild, roleName) {
+    const role = guild.roles.cache.find(r => r.name === roleName);
+    return role ? `<@&${role.id}>` : `**${roleName}**`;
+}
+
+function getClickableRoleMentions(guild) {
+    return {
+        shelfOwner: getRoleMention(guild, 'Shelf Owner'),
+        reader: getRoleMention(guild, 'reader'),
+        level5: getRoleMention(guild, 'Level 5')
+    };
+}
+
+// ===== FEEDBACK PROCESSING =====
+function isInAllowedFeedbackThread(channel) {
+    if (channel.isThread() && channel.parent) {
+        return ALLOWED_FEEDBACK_THREADS.includes(channel.parent.name);
+    }
+    return ALLOWED_FEEDBACK_THREADS.includes(channel.name);
+}
+
+function hasStaffPermissions(member) {
+    return member?.permissions?.has(PermissionFlagsBits.ManageMessages);
+}
+
+async function hasUserLoggedFeedbackForMessage(messageId, userId) {
     try {
-        const bookshelfForum = guild.channels.cache.find(channel => 
-            channel.name === 'bookshelf' && channel.type === 15
-        );
-        
-        if (!bookshelfForum) {
-            console.log('⚠️ Bookshelf forum not found');
-            return false;
-        }
-        
-        const shelfRole = guild.roles.cache.find(r => r.name === 'Shelf Owner');
-        if (!shelfRole) {
-            console.log('⚠️ Shelf Owner role not found');
-            return false;
-        }
-        
-        await bookshelfForum.permissionOverwrites.edit(guild.id, {
-            CreatePublicThreads: false,
-            CreatePrivateThreads: false
-        });
-        
-        await bookshelfForum.permissionOverwrites.edit(shelfRole.id, {
-            CreatePublicThreads: true,
-            CreatePrivateThreads: false
-        });
-        
-        console.log('✅ Bookshelf forum permissions configured');
-        return true;
+        const result = await global.db.db.get('SELECT 1 FROM logged_feedback WHERE message_id = ? AND user_id = ?', [messageId, userId]);
+        return !!result;
     } catch (error) {
-        console.error('❌ Failed to setup bookshelf permissions:', error.message);
         return false;
     }
 }
 
-// ===== FEEDBACK PROCESSING =====
-async function processFeedbackContribution(userId) {
-    const currentCount = getUserMonthlyFeedback(userId);
-    const newCount = currentCount + 1;
-    setUserMonthlyFeedback(userId, newCount);
-    
-    const user = getUserData(userId);
-    user.totalFeedbackAllTime += 1;
-    const newBalance = addDinars(userId, DINARS_PER_FEEDBACK);
-    
-    await saveData();
-    
-    return {
-        newCount,
-        totalAllTime: user.totalFeedbackAllTime,
-        newBalance,
-        requirementMet: newCount >= MONTHLY_FEEDBACK_REQUIREMENT
-    };
+async function logFeedbackForMessage(messageId, userId, feedbackType, chapterNumber, credits) {
+    try {
+        await global.db.db.run(
+            'INSERT OR REPLACE INTO logged_feedback (message_id, user_id, feedback_type, chapter_number, credits_earned, logged_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [messageId, userId, feedbackType, chapterNumber, credits, Date.now()]
+        );
+    } catch (error) {
+        console.error('Error logging feedback:', error);
+    }
 }
 
-function createFeedbackEmbed(user, feedbackData) {
-    return new EmbedBuilder()
-        .setTitle('Contribution Duly Recorded ☝️')
-        .setDescription(`Your generous offering of feedback has been noted with appreciation, ${user}. Such dedication to your fellow scribes is most commendable indeed.`)
-        .addFields(
-            { name: 'This Month', value: `${feedbackData.newCount} contribution${feedbackData.newCount !== 1 ? 's' : ''}`, inline: true },
-            { name: 'Monthly Requirement', value: feedbackData.requirementMet ? '✅ Graciously fulfilled' : '📝 Still in progress', inline: true },
-            { name: 'All Time Total', value: `${feedbackData.totalAllTime}`, inline: true },
-            { name: 'Dinars Earned', value: `💰 +${DINARS_PER_FEEDBACK} dinars`, inline: true },
-            { name: 'Current Balance', value: `💰 ${feedbackData.newBalance} dinars`, inline: true },
-            { name: 'Bookshelf Access', value: getBookshelfAccessStatus(user.id), inline: true }
-        )
-        .setColor(feedbackData.requirementMet ? 0x00AA55 : 0x5865F2);
-}
-
-// ===== FIND USER'S LATEST MESSAGE =====
 async function findUserLatestMessage(channel, userId) {
     try {
-        // Fetch recent messages and find the user's most recent one
         const messages = await channel.messages.fetch({ limit: 50 });
-        const userMessages = messages.filter(msg => msg.author.id === userId && !msg.author.bot);
-        
-        if (userMessages.size === 0) return null;
-        
-        // Get the most recent message (first in the collection since it's sorted by newest first)
-        return userMessages.first();
+        const userMessages = messages.filter(msg => 
+            msg.author.id === userId && 
+            !msg.author.bot && 
+            !msg.content.startsWith('/') && 
+            !msg.content.startsWith('!')
+        );
+        return userMessages.size > 0 ? userMessages.first() : null;
     } catch (error) {
         console.error('Error fetching user messages:', error);
         return null;
     }
 }
 
-// ===== SLASH COMMANDS SETUP =====
+// ===== QUALITY RATING SYSTEM =====
+async function addQualityRating(ratedUserId, rating, raterId, messageId) {
+    try {
+        // Check if this rater has already rated this specific feedback
+        const existing = await global.db.db.get(
+            'SELECT 1 FROM quality_ratings WHERE rated_user_id = ? AND rater_id = ? AND feedback_message_id = ?',
+            [ratedUserId, raterId, messageId]
+        );
+        
+        if (existing) {
+            return { success: false, reason: 'already_rated' };
+        }
+        
+        // Add the rating
+        await global.db.db.run(
+            'INSERT INTO quality_ratings (rated_user_id, rater_id, rating, feedback_message_id, created_at) VALUES (?, ?, ?, ?, ?)',
+            [ratedUserId, raterId, rating, messageId, Date.now()]
+        );
+        
+        // Update user's quality average
+        const ratings = await global.db.db.all(
+            'SELECT rating FROM quality_ratings WHERE rated_user_id = ?',
+            [ratedUserId]
+        );
+        
+        const total = ratings.length;
+        const sum = ratings.reduce((acc, r) => acc + r.rating, 0);
+        const average = total > 0 ? sum / total : 2.0;
+        
+        const user = await getUserData(ratedUserId);
+        await updateUserData(ratedUserId, {
+            qualityRatings: { total, sum, average }
+        });
+        
+        return { success: true, newAverage: average, totalRatings: total };
+    } catch (error) {
+        console.error('Error adding quality rating:', error);
+        return { success: false, reason: 'database_error' };
+    }
+}
+
+// ===== ACCESS CONTROL FUNCTIONS =====
+async function getBookshelfAccessStatus(userId, member = null, guild = null) {
+    const user = await getUserData(userId);
+    const roles = guild ? getClickableRoleMentions(guild) : { reader: '**reader**', shelfOwner: '**Shelf Owner**' };
+    
+    if (user.purchases.includes('shelf')) {
+        if (member && hasReaderRole(member)) {
+            return '✅ Full access granted';
+        } else {
+            return `✅ ${roles.shelfOwner} role acquired - ${roles.reader} role needed from staff`;
+        }
+    } else if (user.totalFeedbackAllTime < ACCESS_REQUIREMENTS.bookshelf.feedbackRequired) {
+        const needed = ACCESS_REQUIREMENTS.bookshelf.feedbackRequired - user.totalFeedbackAllTime;
+        return `📝 Need ${needed} more feedback to qualify for purchase`;
+    } else if (user.currentCredits < ACCESS_REQUIREMENTS.bookshelf.credits) {
+        const needed = ACCESS_REQUIREMENTS.bookshelf.credits - user.currentCredits;
+        return `💰 Need ${needed} more credits to purchase (${user.currentCredits}/${ACCESS_REQUIREMENTS.bookshelf.credits})`;
+    } else {
+        return '💰 Ready to purchase shelf access!';
+    }
+}
+
+async function getReadForReadAccess(userId) {
+    const user = await getUserData(userId);
+    
+    if (user.totalFeedbackAllTime >= ACCESS_REQUIREMENTS.readForRead.totalFeedback) {
+        return '✅ Access granted to read-for-read finder';
+    } else {
+        const needed = ACCESS_REQUIREMENTS.readForRead.totalFeedback - user.totalFeedbackAllTime;
+        return `📝 Need ${needed} more all-time feedback contributions`;
+    }
+}
+
+async function getCompleteDraftsAccess(userId, member) {
+    const user = await getUserData(userId);
+    
+    const hasLevel = hasLevel35Role(member);
+    const hasFeedback = user.totalFeedbackAllTime >= ACCESS_REQUIREMENTS.completeDrafts.totalFeedback;
+    
+    if (hasLevel && hasFeedback) {
+        return '✅ Access granted to complete drafts forum';
+    } else {
+        let missing = [];
+        if (!hasLevel) missing.push('Level 35');
+        if (!hasFeedback) {
+            const needed = ACCESS_REQUIREMENTS.completeDrafts.totalFeedback - user.totalFeedbackAllTime;
+            missing.push(`${needed} more feedback`);
+        }
+        return `❌ Need: ${missing.join(', ')}`;
+    }
+}
+
+// ===== PARDON SYSTEM =====
+async function isUserPardoned(userId) {
+    try {
+        const monthKey = getCurrentMonthKey();
+        return await global.db.isUserPardoned(userId, monthKey);
+    } catch (error) {
+        return false;
+    }
+}
+
+async function pardonUser(userId, reason = 'staff_discretion') {
+    const monthKey = getCurrentMonthKey();
+    try {
+        await global.db.pardonUser(userId, monthKey, reason);
+        console.log(`Pardoned user ${userId} for reason: ${reason}`);
+    } catch (error) {
+        console.error('Error pardoning user:', error);
+    }
+}
+
+// ===== TEMPORARY MESSAGE FUNCTIONS =====
+async function replyTemporary(interaction, messageOptions, delay = MESSAGE_DELETE_TIMEOUT) {
+    try {
+        const message = await interaction.reply(messageOptions);
+        console.log(`Sent temporary interaction reply, will delete in ${delay}ms`);
+        setTimeout(async () => {
+            try { 
+                await interaction.deleteReply(); 
+                console.log('Successfully deleted temporary interaction reply');
+            } catch (error) { 
+                console.log('Failed to delete interaction reply:', error.message); 
+            }
+        }, delay);
+        return message;
+    } catch (error) {
+        console.error('Failed to send temporary reply:', error);
+        return null;
+    }
+}
+
+async function sendTemporaryChannelMessage(channel, content, delay = MESSAGE_DELETE_TIMEOUT) {
+    try {
+        const message = await channel.send(content);
+        console.log(`Sent temporary channel message, will delete in ${delay}ms`);
+        setTimeout(async () => {
+            try { 
+                await message.delete(); 
+                console.log('Successfully deleted temporary channel message');
+            } catch (error) { 
+                console.log('Failed to delete channel message:', error.message); 
+            }
+        }, delay);
+        return message;
+    } catch (error) {
+        console.error('Failed to send temporary channel message:', error);
+        return null;
+    }
+}
+
+// ===== WELCOME SYSTEM =====
+class WelcomeSystem {
+    constructor(client) {
+        this.client = client;
+        this.logger = console;
+    }
+
+    init() {
+        this.client.on('guildMemberAdd', this.handleMemberJoin.bind(this));
+        this.logger.log('✅ Enhanced welcome system initialized');
+    }
+
+    async handleMemberJoin(member) {
+        this.logger.log(`👋 Member joined: ${member.displayName} (${member.id}) in ${member.guild.name}`);
+        
+        try {
+            await updateUserData(member.id, {
+                joinDate: Date.now(),
+                lastActive: Date.now()
+            });
+            
+            await this.sendWelcomeMessage(member);
+        } catch (error) {
+            this.logger.error(`❌ Welcome system error for ${member.displayName}:`, error);
+        }
+    }
+
+    findWelcomeChannel(guild) {
+        for (const channelName of WELCOME_CONFIG.channelNames) {
+            const channel = guild.channels.cache.find(ch => 
+                ch.name === channelName && ch.isTextBased()
+            );
+            if (channel) {
+                this.logger.log(`✅ Found welcome channel: #${channel.name} (exact match)`);
+                return channel;
+            }
+        }
+        return null;
+    }
+
+    createWelcomeEmbed(member) {
+        const { guild } = member;
+        const config = WELCOME_CONFIG.embed;
+        
+        const channels = getClickableChannelMentions(guild);
+
+        const embed = new EmbedBuilder()
+            .setTitle('A New Scribe Joins Our Literary Halls ☝️')
+            .setDescription(`Welcome, **${member.displayName}**. Another soul seeks to join our distinguished gathering of writers and critics. Please study our ${channels.rulesChannel} and ${channels.serverGuideChannel}, then use ${channels.botStuff} and trigger the \`/help\` command for further guidance.`)
+            .setColor(config.color);
+
+        if (config.thumbnail) {
+            embed.setThumbnail(member.user.displayAvatarURL({ dynamic: true }));
+        }
+
+        if (config.timestamp) {
+            embed.setTimestamp();
+        }
+
+        if (config.footer) {
+            embed.setFooter({
+                text: `Member #${guild.memberCount} • Welcome to Type&Draft`,
+                iconURL: guild.iconURL({ dynamic: true })
+            });
+        }
+
+        return embed;
+    }
+
+    async sendWelcomeMessage(member) {
+        const channel = this.findWelcomeChannel(member.guild);
+        
+        if (!channel) {
+            console.log('No suitable welcome channel found');
+            return;
+        }
+
+        const embed = this.createWelcomeEmbed(member);
+        
+        try {
+            const message = await channel.send({ embeds: [embed] });
+            this.logger.log(`✅ Welcome message sent for ${member.displayName} in #${channel.name}`);
+            return message;
+        } catch (error) {
+            this.logger.error(`❌ Failed to send welcome message in #${channel.name}:`, error);
+        }
+    }
+}
+
+const welcomeSystem = new WelcomeSystem(client);
+
+// ===== COMMANDS SETUP =====
 const commands = [
     new SlashCommandBuilder()
         .setName('feedback')
-        .setDescription('Log your most recent feedback message in this thread'),
+        .setDescription('Log your most recent feedback contribution')
+        .addStringOption(option => 
+            option.setName('type')
+                .setDescription('Type of feedback provided')
+                .setRequired(true)
+                .addChoices(
+                    { name: '💬 Inline Comments (1 credit base)', value: 'comment' },
+                    { name: '📄 Document Feedback (3 credits base)', value: 'document' }
+                ))
+        .addIntegerOption(option =>
+            option.setName('chapter')
+                .setDescription('Which chapter did you review? (affects multiplier)')
+                .setRequired(true)
+                .setMinValue(0)
+                .setMaxValue(99)),
     
     new SlashCommandBuilder()
-        .setName('feedback_status')
-        .setDescription('Check monthly contribution status')
+        .setName('rate_feedback')
+        .setDescription('Rate the quality of someone\'s feedback (Level 5+ only)')
+        .addUserOption(option => option.setName('user').setDescription('User who gave feedback').setRequired(true))
+        .addIntegerOption(option =>
+            option.setName('rating')
+                .setDescription('Quality rating (1-4)')
+                .setRequired(true)
+                .setMinValue(1)
+                .setMaxValue(4)),
+    
+    new SlashCommandBuilder()
+        .setName('balance')
+        .setDescription('Check your credits, feedback stats, monthly progress, and access status')
         .addUserOption(option => option.setName('user').setDescription('User to check (optional)').setRequired(false)),
     
     new SlashCommandBuilder()
-        .setName('feedback_add')
-        .setDescription('Add feedback points to a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to add points to').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of points to add (default: 1)').setRequired(false)),
+        .setName('store')
+        .setDescription('Browse the Type&Draft marketplace'),
     
     new SlashCommandBuilder()
-        .setName('feedback_remove')
-        .setDescription('Remove feedback points from a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to remove points from').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of points to remove (default: 1)').setRequired(false)),
+        .setName('buy')
+        .setDescription('Purchase items from the store')
+        .addStringOption(option => 
+            option.setName('item')
+                .setDescription('Item to purchase')
+                .setRequired(true)
+                .addChoices(
+                    { name: '📚 Bookshelf Access (15 credits)', value: 'shelf' },
+                    { name: '📝 Chapter Lease (3 credits)', value: 'lease' },
+                    { name: '🤎 Mocha Mousse (12 credits)', value: 'mocha_mousse' },
+                    { name: '🍑 Peach Fuzz (12 credits)', value: 'peach_fuzz' },
+                    { name: '🔮 Magenta (12 credits)', value: 'magenta' },
+                    { name: '💜 Very Peri (12 credits)', value: 'very_peri' }
+                ))
+        .addIntegerOption(option => 
+            option.setName('quantity')
+                .setDescription('Quantity to purchase (leases only)')
+                .setRequired(false)
+                .setMinValue(1)
+                .setMaxValue(20)),
     
     new SlashCommandBuilder()
-        .setName('feedback_reset')
-        .setDescription('Reset member\'s entire record to zero (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to reset').setRequired(true)),
-    
-    new SlashCommandBuilder()
-        .setName('dinars_add')
-        .setDescription('Add dinars to a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to add dinars to').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of dinars to add').setRequired(true)),
-    
-    new SlashCommandBuilder()
-        .setName('dinars_remove')
-        .setDescription('Remove dinars from a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to remove dinars from').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of dinars to remove').setRequired(true)),
+        .setName('hall_of_fame')
+        .setDescription('View the most distinguished contributors')
+        .addStringOption(option =>
+            option.setName('type')
+                .setDescription('Hall of Fame type')
+                .setRequired(false)
+                .addChoices(
+                    { name: '🏆 Monthly Champions', value: 'monthly' },
+                    { name: '👑 All-Time Legends', value: 'alltime' },
+                    { name: '⭐ Quality Masters', value: 'quality' }
+                )),
     
     new SlashCommandBuilder()
         .setName('help')
-        .setDescription('Display command guide'),
+        .setDescription('Display the comprehensive guide to our feedback system'),
+    
+    // Staff commands
+    new SlashCommandBuilder()
+        .setName('feedback_add')
+        .setDescription('Add feedback count to a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to add feedback to').setRequired(true))
+        .addIntegerOption(option => option.setName('amount').setDescription('Amount to add (default: 1)').setRequired(false)),
+    
+    new SlashCommandBuilder()
+        .setName('feedback_remove')
+        .setDescription('Remove feedback count from a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to remove feedback from').setRequired(true))
+        .addIntegerOption(option => option.setName('amount').setDescription('Amount to remove (default: 1)').setRequired(false)),
+    
+    new SlashCommandBuilder()
+        .setName('credit_add')
+        .setDescription('Add credits to a member\'s balance (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to add credits to').setRequired(true))
+        .addIntegerOption(option => option.setName('amount').setDescription('Amount to add (default: 1)').setRequired(false)),
+    
+    new SlashCommandBuilder()
+        .setName('credit_remove')
+        .setDescription('Remove credits from a member\'s balance (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to remove credits from').setRequired(true))
+        .addIntegerOption(option => option.setName('amount').setDescription('Amount to remove (default: 1)').setRequired(false)),
+    
+    new SlashCommandBuilder()
+        .setName('lease_add')
+        .setDescription('Add chapter leases to a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('User to add leases to').setRequired(true))
+        .addIntegerOption(option => option.setName('amount').setDescription('Amount to add (default: 1)').setRequired(false)),
+    
+    new SlashCommandBuilder()
+        .setName('setup_bookshelf')
+        .setDescription('Grant bookshelf access to a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('Member to grant access to').setRequired(true)),
     
     new SlashCommandBuilder()
         .setName('stats')
         .setDescription('View detailed server statistics (Staff only)'),
     
     new SlashCommandBuilder()
-        .setName('balance')
-        .setDescription('Check your dinar balance and bookshelf eligibility')
-        .addUserOption(option => option.setName('user').setDescription('User to check (optional)').setRequired(false)),
+        .setName('pardon')
+        .setDescription('Pardon a member from monthly requirements (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('Member to pardon').setRequired(true)),
     
     new SlashCommandBuilder()
-        .setName('store')
-        .setDescription('View available items in the Type&Draft store'),
+        .setName('unpardon')
+        .setDescription('Remove pardon from a member (Staff only)')
+        .addUserOption(option => option.setName('user').setDescription('Member to remove pardon from').setRequired(true)),
     
     new SlashCommandBuilder()
-        .setName('buy')
-        .setDescription('Purchase an item from the store')
-        .addStringOption(option => option.setName('item').setDescription('Item to purchase').setRequired(true)
-            .addChoices({ name: 'Bookshelf Access (200 dinars)', value: 'shelf' })),
+        .setName('pardoned_last_month')
+        .setDescription('View members pardoned last month (Staff only)'),
     
     new SlashCommandBuilder()
-        .setName('setup_bookshelf')
-        .setDescription('Setup bookshelf forum permissions (Staff only)')
+        .setName('purge_list')
+        .setDescription('View members who would be purged (Staff only)'),
+    
+    new SlashCommandBuilder()
+        .setName('post_guide')
+        .setDescription('Post the server guide (Staff only)')
+        .addStringOption(option =>
+            option.setName('type')
+                .setDescription('Guide type')
+                .setRequired(true)
+                .addChoices(
+                    { name: 'Server Navigation', value: 'navigation' },
+                    { name: 'Rules', value: 'rules' },
+                    { name: 'Feedback System', value: 'feedback' }
+                )),
+
+    new SlashCommandBuilder()
+    .setName('user_reset')
+    .setDescription('Completely reset a member\'s progress (Staff only)')
+    .addUserOption(option => option.setName('user').setDescription('User to reset completely').setRequired(true)),
+
+    new SlashCommandBuilder()
+    .setName('post_rules')
+    .setDescription('Post the server rules (Staff only)'),
 ];
 
 async function registerCommands() {
     try {
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
-        console.log('Started refreshing application (/) commands.');
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT2_TOKEN);
+        console.log('Started refreshing enhanced feedback system commands.');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('Successfully reloaded application (/) commands.');
+        console.log('Successfully reloaded enhanced feedback system commands.');
     } catch (error) {
         console.error('Error registering commands:', error);
     }
@@ -502,256 +1067,140 @@ async function registerCommands() {
 
 // ===== BOT EVENTS =====
 client.once('ready', async () => {
-    console.log(`${client.user.tag} is online and serving Type&Draft!`);
-    await loadData();
-    await registerCommands();
-});
-
-client.on('guildMemberAdd', async (member) => {
-    // Welcome channel announcement
-    const welcomeChannel = member.guild.channels.cache.find(ch => ch.name === 'welcome');
-    if (welcomeChannel) {
-        const welcomeEmbed = new EmbedBuilder()
-            .setTitle(`Behold! A New Scribe Joins Our Esteemed Halls ☝️`)
-            .setDescription(`@everyone\n\nMy lords and ladies, I have the distinct pleasure of announcing the arrival of ${member.displayName} to our distinguished literary realm. Word has reached my ears that they seek to test their mettle amongst writers of considerable reputation.\n\nAs your humble servant, I do hope you shall extend the customary courtesies befitting our station. Perhaps a warm greeting, a gentle word of guidance, or—dare I suggest—an invitation to partake in the noble art of critique exchange.\n\nRemember, dear writers, that today's newcomer may well become tomorrow's most celebrated wordsmith. I have witnessed many a humble quill rise to greatness through the nurturing embrace of this very community.`)
-            .addFields(
-                { name: 'A Most Sage Counsel', value: `${member.displayName}, you would do exceedingly well to acquaint yourself with our customs forthwith. Visit the introductions channel, peruse our rules with the attention they deserve, and perhaps—when you feel sufficiently prepared—venture forth to offer or seek the invaluable gift of feedback.`, inline: false },
-                { name: 'The Path to Literary Standing', value: `Know this: in Type&Draft, we measure worth not by birth nor station, but by one\'s willingness to nurture the craft of fellow scribes. Each month, those of Level 5 standing must contribute at least ${MONTHLY_FEEDBACK_REQUIREMENT} offerings of feedback to maintain their good name.`, inline: false }
-            )
-            .setColor(0xFFD700)
-            .setThumbnail(member.user.displayAvatarURL())
-            .setFooter({ text: 'Your devoted servant in all matters literary and administrative' });
+    console.log(`${client.user.tag} is online and serving the enhanced Type&Draft realm!`);
+    
+    try {
+        const db = new DatabaseManager();
+        await db.initialize();
         
-        await sendTemporaryMessage(welcomeChannel, { embeds: [welcomeEmbed] });
+        const connectionTest = await db.testConnection();
+        if (!connectionTest) {
+            throw new Error('Database connection test failed');
+        }
+        console.log('✅ Enhanced database connection verified');
+        
+        global.db = db;
+        
+    } catch (error) {
+        console.error('❌ Database initialization failed:', error);
+        process.exit(1);
     }
     
-    // Introduction channel instructions
-    const introChannel = member.guild.channels.cache.find(ch => ch.name === 'introductions');
-    if (introChannel) {
-        const embed = new EmbedBuilder()
-            .setTitle(`A New Writer Graces Type&Draft ☝️`)
-            .setDescription(`Welcome, ${member.displayName}. I do hope your quill shall prove as sharp as your wit. Please, do acquaint yourself with our modest customs and introduce yourself with your **lucky number** and **favorite animal** - small tokens that help us know our fellow scribes better.`)
-            .addFields(
-                { name: 'Your Path Forward', value: '• Peruse the rules with utmost care\n• Select your roles in reaction-roles\n• Introduce yourself here with the required particulars\n• Begin your literary journey amongst kindred spirits', inline: false },
-                { name: 'A Gentle Counsel', value: `Remember, dear writer, that in Type&Draft we flourish through the sharing of wisdom. Each month, you must offer at least ${MONTHLY_FEEDBACK_REQUIREMENT} contributions of feedback to remain in good standing once you reach Level 5.`, inline: false }
-            )
-            .setColor(0x2F3136)
-            .setThumbnail(member.user.displayAvatarURL());
-        
-        await sendTemporaryMessage(introChannel, { embeds: [embed] });
+    await registerCommands();
+    welcomeSystem.init();
+    
+    // Force fetch members for all guilds
+    for (const guild of client.guilds.cache.values()) {
+        try {
+            await guild.members.fetch();
+            await guild.roles.fetch();
+            console.log(`Fetched ${guild.members.cache.size} members and ${guild.roles.cache.size} roles for ${guild.name}`);
+        } catch (error) {
+            console.error(`Failed to fetch data for ${guild.name}:`, error);
+        }
     }
+    
+    console.log('🎭 Enhanced Type&Draft bot fully initialized!');
 });
 
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // Bookshelf forum protection
-    if (await handleBookshelfMessage(message)) return;
-
-    // Handle traditional commands
-    if (message.content.startsWith('!')) {
-        await handleCommand(message);
+    // BOOKSHELF THREAD HANDLING
+    if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
+        
+        // Only thread owners can post
+        if (message.channel.ownerId !== message.author.id) {
+            await message.delete();
+            await sendTemporaryChannelMessage(message.channel, 
+                `Apologies, **${message.author.displayName}**, but only the thread creator may post here. ☝️`,
+                8000
+            );
+            return;
+        }
+        
+        // Check lease requirements
+        try {
+            const messages = await message.channel.messages.fetch({ limit: 50 });
+            const ownerMessages = messages.filter(msg => 
+                msg.author.id === message.channel.ownerId && 
+                msg.id !== message.id
+            );
+            
+            const isFirstPost = ownerMessages.size === 0;
+            const userRecord = await getUserData(message.author.id);
+            
+            if (isFirstPost) {
+                await sendTemporaryChannelMessage(message.channel, 
+                    `📝 Welcome to your bookshelf! First chapter is complimentary. **${userRecord.chapterLeases}** leases remaining. ☝️`, 
+                    8000
+                );
+            } else {
+                if (userRecord.chapterLeases <= 0) {
+                    await message.delete();
+                    await sendTemporaryChannelMessage(message.channel, 
+                        `📝 **${message.author.displayName}**, you need chapter leases to post! Purchase with \`/buy lease\`. ☝️`,
+                        8000
+                    );
+                    return;
+                }
+                
+                await consumeLease(message.author.id);
+                const updatedRecord = await getUserData(message.author.id);
+                
+                await sendTemporaryChannelMessage(message.channel, 
+                    `📝 Chapter posted! **${updatedRecord.chapterLeases}** leases remaining. ☝️`, 
+                    8000
+                );
+            }
+            
+        } catch (error) {
+            console.error('Error in bookshelf message handling:', error);
+        }
+        
         return;
     }
-
-    // Introduction detection
-    await handleIntroductionMessage(message);
 });
 
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
+    console.log(`🎯 Command received: /${interaction.commandName} from ${interaction.user.displayName}`);
+
     try {
         await handleSlashCommand(interaction);
     } catch (error) {
-        console.error('Interaction error:', error);
+        console.error(`❌ Command /${interaction.commandName} failed:`, error);
         await handleInteractionError(interaction, error);
     }
 });
 
-// ===== MESSAGE HANDLERS =====
-async function handleBookshelfMessage(message) {
-    if (!message.channel.isThread() || !message.channel.parent || message.channel.parent.name !== 'bookshelf') {
-        return false;
-    }
-
-    const userId = message.author.id;
-    const user = getUserData(userId);
-    const isThreadOwner = message.channel.ownerId === userId;
-    
-    if (!isThreadOwner) {
-        await message.delete();
-        await sendBookshelfAccessDeniedDM(message.author, 'thread_owner');
-        return true;
-    }
-    
-    if (!canPostInBookshelf(userId) || !hasShelfRole(message.member)) {
-        await message.delete();
-        await sendBookshelfAccessDeniedDM(message.author, 'no_access', user);
-        return true;
-    }
-    
-    if (!canMakeNewPost(userId)) {
-        await message.delete();
-        await sendBookshelfAccessDeniedDM(message.author, 'no_credits', user);
-        return true;
-    }
-    
-    // Allow the message and increment counter
-    user.bookshelfPosts += 1;
-    await saveData();
-    
-    // Send milestone message
-    await sendBookshelfMilestone(message, user);
-    return true;
-}
-
-async function sendBookshelfAccessDeniedDM(author, reason, user = null) {
-    const embeds = {
-        thread_owner: new EmbedBuilder()
-            .setTitle('Thread Owner Only ☝️')
-            .setDescription(`Dear ${author}, I regret to inform you that only the original author may add content to their literary threads. This sacred space is reserved for the creator's continued narrative.`)
-            .addFields(
-                { name: 'How to Provide Feedback', value: '• Visit the **#bookshelf-feedback** or **#bookshelf-discussion** forums\n• Create a thread or comment with your thoughts\n• Use `/feedback` or `!feedback` to log your contribution', inline: false },
-                { name: 'Why This Restriction?', value: 'Each bookshelf thread is the author\'s personal showcase space. Feedback and discussions happen in the dedicated feedback forums.', inline: false }
-            )
-            .setColor(0xFF9900),
-        
-        no_access: new EmbedBuilder()
-            .setTitle('Bookshelf Access Required ☝️')
-            .setDescription(`Dear ${author}, I regret to inform you that posting in the bookshelf forum requires both dedication and investment in our literary community.`)
-            .addFields(
-                { name: 'Requirements to Post', value: `• **Minimum ${MINIMUM_FEEDBACK_FOR_SHELF} feedback contributions** (You have: ${user.totalFeedbackAllTime})\n• **Purchase bookshelf access** from the store for ${STORE_ITEMS.shelf.price} dinars\n• **Current balance:** ${user.dinars} dinars`, inline: false },
-                { name: 'How to Gain Access', value: '1. Give feedback to fellow writers and log it with `/feedback`\n2. Earn 100 dinars per logged feedback\n3. Purchase "Bookshelf Access" from `/store` for 200 dinars\n4. Return here to share your literary works', inline: false }
-            )
-            .setColor(0xFF9900),
-        
-        no_credits: new EmbedBuilder()
-            .setTitle('Insufficient Message Credits ☝️')
-            .setDescription(`Dear ${author}, while you possess bookshelf access, each message beyond your first requires additional dedication to our community through feedback contributions.`)
-            .addFields(
-                { name: 'Your Bookshelf Activity', value: `• **Messages posted:** ${user.bookshelfPosts}\n• **Total feedback given:** ${user.totalFeedbackAllTime}\n• **Additional feedback needed:** ${Math.abs(user.totalFeedbackAllTime - user.bookshelfPosts - 1) + 1}`, inline: false },
-                { name: 'How the System Works', value: '• **First message ever:** Free after purchasing shelf access\n• **Each additional message:** Requires 1 more total feedback contribution\n• **Example:** 5 total feedback = 4 messages allowed (1 free + 3 earned)', inline: false },
-                { name: 'How to Earn More Messages', value: `Give feedback to fellow writers in the forums and log it with \`/feedback\``, inline: false }
-            )
-            .setColor(0xFF9900)
-    };
-    
-    try {
-        const dmChannel = await author.createDM();
-        await dmChannel.send({ embeds: [embeds[reason]] });
-    } catch (error) {
-        console.log('Could not send DM to user:', error.message);
-    }
-}
-
-async function sendBookshelfMilestone(message, user) {
-    const isFirstMessage = user.bookshelfPosts === 1;
-    const remainingPosts = Math.max(0, user.totalFeedbackAllTime - user.bookshelfPosts - 1);
-    
-    if (isFirstMessage || user.bookshelfPosts % 5 === 0) {
-        const embed = new EmbedBuilder()
-            .setTitle(isFirstMessage ? 'First Message Posted ☝️' : 'Milestone Reached ☝️')
-            .setDescription(isFirstMessage ? 
-                `Your first literary contribution has been graciously accepted into the bookshelf forum, ${message.author}. May it inspire meaningful discussions among our community.` :
-                `Congratulations, ${message.author}! You have reached ${user.bookshelfPosts} messages in our literary forum. Your dedication to our community is most commendable.`)
-            .addFields(
-                { name: 'Messages Posted', value: `${user.bookshelfPosts}`, inline: true },
-                { name: 'Messages Remaining', value: remainingPosts > 0 ? `${remainingPosts}` : 'Give more feedback to post again', inline: true },
-                { name: 'Total Feedback Given', value: `${user.totalFeedbackAllTime}`, inline: true }
-            )
-            .setColor(0x00AA55);
-        
-        await sendTemporaryMessage(message.channel, { embeds: [embed] });
-    }
-}
-
-async function handleIntroductionMessage(message) {
-    if (message.channel.name !== 'introductions') return;
-    
-    const content = message.content.toLowerCase();
-    const hasLuckyNumber = /lucky number|number.*\d|\d.*lucky/.test(content);
-    const hasFavoriteAnimal = /favorite animal|favourite animal|fav animal/.test(content);
-    
-    if (hasLuckyNumber && hasFavoriteAnimal) {
-        const embed = new EmbedBuilder()
-            .setTitle('A Most Satisfactory Introduction ☝️')
-            .setDescription(`${message.author}, you have provided all that was requested with admirable precision. I shall ensure our esteemed staff reviews your particulars with due consideration.`)
-            .addFields(
-                { name: 'Requirements Fulfilled', value: '✅ Lucky number mentioned\n✅ Favorite animal shared', inline: true },
-                { name: 'What Follows', value: 'Our staff shall review and, if suitable, grant you passage', inline: true }
-            )
-            .setColor(0xFFD700);
-        
-        await replyTemporaryMessage(message, { embeds: [embed] });
-    } else if (hasLuckyNumber || hasFavoriteAnimal) {
-        const missing = [];
-        if (!hasLuckyNumber) missing.push('lucky number');
-        if (!hasFavoriteAnimal) missing.push('favorite animal');
-        
-        const embed = new EmbedBuilder()
-            .setTitle('A Small Matter Overlooked')
-            .setDescription(`I do believe you may have forgotten to mention your **${missing.join(' and ')}**. A small detail, but one that helps us know our fellow writers better.`)
-            .setColor(0xFF9900);
-        
-        await replyTemporaryMessage(message, { embeds: [embed] });
-        try {
-            await message.react('📝');
-        } catch (error) {
-            console.log('Could not add reaction:', error.message);
-        }
-    }
-}
-
 // ===== COMMAND HANDLERS =====
-async function handleCommand(message) {
-    const args = message.content.slice(1).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
-
-    try {
-        console.log(`Processing command: ${command} from ${message.author.displayName}`);
-        
-        const commandHandlers = {
-            feedback: () => handleFeedbackCommand(message),
-            feedback_status: () => handleFeedbackStatusCommand(message),
-            feedback_add: () => handleFeedbackAddCommand(message, args),
-            feedback_remove: () => handleFeedbackRemoveCommand(message, args),
-            feedback_reset: () => handleFeedbackResetCommand(message),
-            dinars_add: () => handleDinarsAddCommand(message, args),
-            dinars_remove: () => handleDinarsRemoveCommand(message, args),
-            help: () => handleHelpCommand(message),
-            stats: () => handleStatsCommand(message),
-            balance: () => handleBalanceCommand(message),
-            store: () => handleStoreCommand(message),
-            buy: () => handleBuyCommand(message, args),
-            setup_bookshelf: () => handleSetupBookshelfCommand(message)
-        };
-        
-        const handler = commandHandlers[command];
-        if (handler) {
-            await handler();
-        }
-    } catch (error) {
-        console.error(`Command error for ${command}:`, error);
-        await handleCommandError(message, command, error);
-    }
-}
-
 async function handleSlashCommand(interaction) {
     const commandHandlers = {
-        feedback: () => handleFeedbackSlashCommand(interaction),
-        feedback_status: () => handleFeedbackStatusSlashCommand(interaction),
-        feedback_add: () => handleFeedbackAddSlashCommand(interaction),
-        feedback_remove: () => handleFeedbackRemoveSlashCommand(interaction),
-        feedback_reset: () => handleFeedbackResetSlashCommand(interaction),
-        dinars_add: () => handleDinarsAddSlashCommand(interaction),
-        dinars_remove: () => handleDinarsRemoveSlashCommand(interaction),
-        help: () => handleHelpSlashCommand(interaction),
-        stats: () => handleStatsSlashCommand(interaction),
-        balance: () => handleBalanceSlashCommand(interaction),
-        store: () => handleStoreSlashCommand(interaction),
-        buy: () => handleBuySlashCommand(interaction),
-        setup_bookshelf: () => handleSetupBookshelfSlashCommand(interaction)
+        feedback: () => handleFeedbackCommand(interaction),
+        rate_feedback: () => handleRateFeedbackCommand(interaction),
+        balance: () => handleBalanceCommand(interaction),
+        store: () => handleStoreCommand(interaction),
+        buy: () => handleBuyCommand(interaction),
+        hall_of_fame: () => handleHallOfFameCommand(interaction),
+        help: () => handleHelpCommand(interaction),
+        
+        // Staff commands
+        feedback_add: () => handleFeedbackAddCommand(interaction),
+        feedback_remove: () => handleFeedbackRemoveCommand(interaction),
+        credit_add: () => handleCreditAddCommand(interaction),
+        credit_remove: () => handleCreditRemoveCommand(interaction),
+        lease_add: () => handleLeaseAddCommand(interaction),
+        setup_bookshelf: () => handleSetupBookshelfCommand(interaction),
+        user_reset: () => handleUserResetCommand(interaction), // ADD THIS
+        stats: () => handleStatsCommand(interaction),
+        pardon: () => handlePardonCommand(interaction),
+        unpardon: () => handleUnpardonCommand(interaction),
+        pardoned_last_month: () => handlePardonedLastMonthCommand(interaction),
+        purge_list: () => handlePurgeListCommand(interaction),
+        post_guide: () => handlePostGuideCommand(interaction),
+        post_rules: () => handlePostRulesCommand(interaction) // ADD THIS
     };
     
     const handler = commandHandlers[interaction.commandName];
@@ -760,778 +1209,1132 @@ async function handleSlashCommand(interaction) {
     }
 }
 
-// ===== FEEDBACK COMMANDS =====
-async function handleFeedbackCommand(message) {
-    console.log(`Processing !feedback command for ${message.author.displayName}`);
-    return await processFeedbackCommand(message.author, message.member, message.channel, false);
-}
-
-async function handleFeedbackSlashCommand(interaction) {
-    console.log(`Processing /feedback command for ${interaction.user.displayName}`);
-    return await processFeedbackCommand(interaction.user, interaction.member, interaction.channel, true, interaction);
-}
-
-async function processFeedbackCommand(user, member, channel, isSlash, interaction = null) {
-    // Check if command is used in correct threads
-    if (!isInAllowedFeedbackThread(channel)) {
+async function handleFeedbackCommand(interaction) {
+    const feedbackType = interaction.options.getString('type');
+    const chapterNumber = interaction.options.getInteger('chapter');
+    
+    // Check Level 5 requirement
+    if (!hasLevel5Role(interaction.member)) {
         const embed = new EmbedBuilder()
-            .setTitle('Incorrect Thread ☝️')
-            .setDescription('I regret to inform you that feedback contributions may only be logged within the designated literary threads of our community.')
+            .setTitle('Level 5 Required ☝️')
+            .setDescription('You must attain **Level 5** standing before logging feedback contributions.')
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    // Check if in correct location
+    if (!isInAllowedFeedbackThread(interaction.channel)) {
+        const channels = getClickableChannelMentions(interaction.guild);
+        const embed = new EmbedBuilder()
+            .setTitle('Wrong Location ☝️')
             .addFields({
-                name: 'Permitted Threads',
-                value: '• **bookshelf-feedback** forum - For recording feedback given to fellow writers\n• **bookshelf-discussion** forum - For discussions about literary critiques',
+                name: 'Permitted Halls',
+                value: `• ${channels.bookshelfFeedback} forum\n• ${channels.bookshelfDiscussion} forum`,
                 inline: false
             })
             .setColor(0xFF9900);
         
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
-        }
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    if (!hasLevel5Role(member)) {
+    // Check if thread owner trying to log own thread
+    if (interaction.channel.isThread() && interaction.channel.ownerId === interaction.user.id) {
         const embed = new EmbedBuilder()
-            .setTitle('Insufficient Standing')
-            .setDescription('I fear you must first attain Level 5 standing within our community before you may log feedback contributions, dear writer. Continue your literary journey and return when you have gained the necessary experience.')
+            .setTitle('Cannot Log Own Thread ☝️')
             .setColor(0xFF9900);
         
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
-        }
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    // Find user's most recent message in this channel
-    const latestMessage = await findUserLatestMessage(channel, user.id);
+    // Find recent message
+    const latestMessage = await findUserLatestMessage(interaction.channel, interaction.user.id);
     
     if (!latestMessage) {
         const embed = new EmbedBuilder()
             .setTitle('No Recent Message Found ☝️')
-            .setDescription('I regret that I could not locate a recent message from you in this thread, dear writer. Please ensure you have posted your feedback before attempting to log it.')
-            .addFields({
-                name: 'How to Use This Command',
-                value: '1. Post your feedback/critique in this thread\n2. Use `/feedback` or `!feedback` to log your contribution\n3. This logs your most recent message and awards dinars',
-                inline: false
-            })
+            .setDescription('You must post your feedback before using this command.')
             .setColor(0xFF9900);
         
-        if (isSlash) {
-            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
-        }
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    // Check if this message has already been logged
-    if (hasUserLoggedFeedbackForMessage(latestMessage.id, user.id)) {
+    // Check if already logged
+    if (await hasUserLoggedFeedbackForMessage(latestMessage.id, interaction.user.id)) {
         const embed = new EmbedBuilder()
-            .setTitle('Feedback Already Logged ☝️')
-            .setDescription('I regret to inform you that you have already logged feedback for this particular message, dear writer. Each contribution may only be counted once.')
-            .addFields({
-                name: 'To Log More Feedback',
-                value: 'Post a new feedback message and then use the feedback command again.',
-                inline: false
-            })
+            .setTitle('Already Logged ☝️')
             .setColor(0xFF9900);
         
-        if (isSlash) {
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    // Process feedback
+    const feedbackData = await processFeedbackContribution(
+        interaction.user.id, 
+        feedbackType, 
+        chapterNumber
+    );
+    
+    // Log it
+    await logFeedbackForMessage(
+        latestMessage.id, 
+        interaction.user.id, 
+        feedbackType, 
+        chapterNumber, 
+        feedbackData.credits
+    );
+    
+    // Create response
+    const feedbackTypeData = FEEDBACK_TYPES[feedbackType];
+    const { multiplier: chapterMultiplier, tier } = calculateChapterMultiplier(chapterNumber);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Feedback Contribution Recorded ☝️')
+        .addFields(
+            { 
+                name: 'Details', 
+                value: `${feedbackTypeData.emoji} ${feedbackTypeData.name}\n📃 Chapter ${chapterNumber} (${tier})`, 
+                inline: true 
+            },
+            { 
+                name: 'Credits Earned', 
+                value: `${feedbackTypeData.baseCredits} × ${chapterMultiplier} × ${feedbackData.qualityMultiplier.toFixed(1)} = **${feedbackData.credits}**`, 
+                inline: true 
+            },
+            {
+                name: 'Monthly Progress',
+                value: `📄 Docs: ${feedbackData.monthlyData.docs}\n💬 Comments: ${feedbackData.monthlyData.comments}\n${feedbackData.requirementMet ? '✅' : '❌'} Requirement: ${feedbackData.requirementMet ? 'Met' : 'Not Met'}`,
+                inline: true
+            }
+        )
+        .setColor(feedbackData.requirementMet ? 0x00AA55 : 0x5865F2);
+    
+    await replyTemporary(interaction, { embeds: [embed] }, 8000);
+}
+
+async function handleRateFeedbackCommand(interaction) {
+    if (!hasLevel5Role(interaction.member)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Level 5 Required ☝️')
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    const targetUser = interaction.options.getUser('user');
+    const rating = interaction.options.getInteger('rating');
+    
+    // Find a recent message from the target user in this channel
+    const targetMessage = await findUserLatestMessage(interaction.channel, targetUser.id);
+    
+    if (!targetMessage) {
+        const embed = new EmbedBuilder()
+            .setTitle('No Recent Feedback Found ☝️')
+            .setDescription(`Cannot find recent feedback from ${targetUser.displayName} in this thread.`)
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    const result = await addQualityRating(targetUser.id, rating, interaction.user.id, targetMessage.id);
+    
+    if (!result.success) {
+        let message = 'Failed to add rating.';
+        if (result.reason === 'already_rated') {
+            message = 'You have already rated this user\'s feedback.';
+        }
+        
+        const embed = new EmbedBuilder()
+            .setTitle('Rating Failed ☝️')
+            .setDescription(message)
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    const qualityData = QUALITY_MULTIPLIERS[rating];
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Quality Rating Recorded ☝️')
+        .addFields(
+            { 
+                name: 'Rating Given', 
+                value: `${qualityData.emoji} ${qualityData.name} (${rating}/4)`, 
+                inline: true 
+            },
+            { 
+                name: 'New Average', 
+                value: `${result.newAverage.toFixed(2)}/4.0 (${result.totalRatings} ratings)`, 
+                inline: true 
+            }
+        )
+        .setColor(0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+}
+
+async function handleBalanceCommand(interaction) {
+    const targetUser = interaction.options.getUser('user') || interaction.user;
+    const targetMember = interaction.options.getMember('user') || interaction.member;
+    
+    const user = await getUserData(targetUser.id);
+    const monthlyData = await getUserMonthlyFeedback(targetUser.id);
+    const quotaStatus = checkMonthlyRequirement(monthlyData);
+    
+    // Access status checks
+    const bookshelfStatus = await getBookshelfAccessStatus(targetUser.id, targetMember, interaction.guild);
+    const readForReadStatus = await getReadForReadAccess(targetUser.id);
+    const completeDraftsStatus = await getCompleteDraftsAccess(targetUser.id, targetMember);
+    
+    const embed = new EmbedBuilder()
+        .setTitle(`⚔️ ${targetUser.displayName}'s Literary Standing ☝️`)
+        .addFields(
+            { name: '💰 Current Credits', value: `${user.currentCredits}`, inline: true },
+            { name: '📝 Chapter Leases', value: `${user.chapterLeases}`, inline: true },
+            { name: '📊 Total Feedback', value: `${user.totalFeedbackAllTime}`, inline: true },
+            { name: '⭐ Quality Average', value: `${user.qualityRatings.average.toFixed(2)}/4.0`, inline: true },
+            { name: '🗡️ Monthly Progress', value: `📄 ${monthlyData.docs} docs • 💬 ${monthlyData.comments} comments`, inline: true },
+            { name: '👑 Monthly Quota', value: `${quotaStatus ? '✅ Fulfilled' : '❌ Unfulfilled'}`, inline: true },
+            { name: '📚 Bookshelf Access', value: bookshelfStatus, inline: false },
+            { name: '🔍 Read-for-Read Access', value: readForReadStatus, inline: true },
+            { name: '📖 Complete Drafts Access', value: completeDraftsStatus, inline: true }
+        )
+        .setDescription(`**Monthly Requirements (Choose One):**\n⚔️ 2 document feedbacks\n🛡️ 6 comment feedbacks\n🗡️ 1 document + 3 comments`)
+        .setColor(quotaStatus ? 0x00AA55 : 0xFF9900);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleMonthlyCommand(interaction) {
+    const targetUser = interaction.options.getUser('user') || interaction.user;
+    const monthlyData = await getUserMonthlyFeedback(targetUser.id);
+    const quotaStatus = checkMonthlyRequirement(monthlyData);
+    
+    const embed = new EmbedBuilder()
+        .setTitle(`Monthly Progress - ${targetUser.displayName} ☝️`)
+        .addFields(
+            { name: 'Document Feedback', value: `📄 ${monthlyData.docs}`, inline: true },
+            { name: 'Comment Feedback', value: `💬 ${monthlyData.comments}`, inline: true },
+            { name: 'Requirement Status', value: quotaStatus ? '✅ Met' : '❌ Not Met', inline: true }
+        )
+        .setDescription(`**Monthly Options:**\n• 2 document feedbacks\n• 6 comment feedbacks\n• 1 document + 3 comments`)
+        .setColor(quotaStatus ? 0x00AA55 : 0xFF9900);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleStoreCommand(interaction) {
+    const channels = getClickableChannelMentions(interaction.guild);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Type&Draft Literary Marketplace ☝️')
+        .addFields(
+            { 
+                name: '📚 Bookshelf Access (15 credits)', // CHANGED: From 18 to 15
+                value: `Create threads in ${channels.bookshelf}. Requires Level 5 + 2 total feedback.`, 
+                inline: false 
+            },
+            { 
+                name: '📝 Chapter Lease (3 credits)', 
+                value: 'Post one chapter in your bookshelf thread. First chapter always free!', 
+                inline: false 
+            },
+            // REMOVED: Premium Services section
+            { 
+                name: '🎨 Color Roles (Level 15, 12 credits)', 
+                value: '🤎 Mocha Mousse • 🍑 Peach Fuzz • 🔮 Magenta • 💜 Very Peri', 
+                inline: false 
+            },
+            {
+                name: '💡 Credit System',
+                value: '💬 **Comment Feedback:** 1 credit base\n📄 **Document Feedback:** 3 credits base\n📈 **Chapter Multipliers:** 1.0x → 1.75x\n⭐ **Quality Ratings:** Boost future earnings',
+                inline: false
+            }
+        )
+        .setColor(0xFF8C00);
+        
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleBuyCommand(interaction) {
+    const itemKey = interaction.options.getString('item');
+    const quantity = interaction.options.getInteger('quantity') || 1;
+    const item = STORE_ITEMS[itemKey];
+    const user = await getUserData(interaction.user.id);
+    
+    // Validate purchase
+    const finalQuantity = item.allowQuantity ? quantity : 1;
+    const totalPrice = item.price * finalQuantity;
+    
+    // Check level requirements
+    if (item.levelRequired && !hasLevel15Role(interaction.member)) {
+        const embed = new EmbedBuilder()
+            .setTitle(`Level ${item.levelRequired} Required ☝️`)
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    // Check special requirements for bookshelf
+    if (itemKey === 'shelf') {
+        if (!hasLevel5Role(interaction.member)) {
+            const embed = new EmbedBuilder()
+                .setTitle('Level 5 Required ☝️')
+                .setColor(0xFF9900);
+            
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-        } else {
-            return await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
+        }
+        
+        if (user.totalFeedbackAllTime < ACCESS_REQUIREMENTS.bookshelf.feedbackRequired) {
+            const needed = ACCESS_REQUIREMENTS.bookshelf.feedbackRequired - user.totalFeedbackAllTime;
+            const embed = new EmbedBuilder()
+                .setTitle('Insufficient Feedback History ☝️')
+                .setDescription(`Bookshelf requires ${ACCESS_REQUIREMENTS.bookshelf.feedbackRequired} total feedback contributions. You need ${needed} more.`)
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        }
+        
+        if (user.purchases.includes('shelf')) {
+            const embed = new EmbedBuilder()
+                .setTitle('Already Purchased ☝️')
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
         }
     }
     
-    // Log the feedback
-    logFeedbackForMessage(latestMessage.id, user.id);
-    
-    const feedbackData = await processFeedbackContribution(user.id);
-    const embed = createFeedbackEmbed(user, feedbackData);
-    
-    console.log('Feedback command completed successfully');
-    
-    if (isSlash) {
-        await replyTemporary(interaction, { embeds: [embed] });
-    } else {
-        await replyTemporaryMessage({ author: user, reply: (msg) => channel.send(msg) }, { embeds: [embed] });
-    }
-}
-
-// ===== REMAINING COMMAND IMPLEMENTATIONS =====
-
-async function handleFeedbackStatusCommand(message) {
-    const user = message.mentions.users.first() || message.author;
-    const embed = createFeedbackStatusEmbed(user, message.author);
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleFeedbackStatusSlashCommand(interaction) {
-    const user = interaction.options.getUser('user') || interaction.user;
-    const embed = createFeedbackStatusEmbed(user, interaction.user);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-function createFeedbackStatusEmbed(user, requester) {
-    const userId = user.id;
-    const monthlyCount = getUserMonthlyFeedback(userId);
-    const totalAllTime = getUserData(userId).totalFeedbackAllTime;
-    
-    return new EmbedBuilder()
-        .setTitle(`Monthly Standing - ${user.displayName}`)
-        .setDescription(`Allow me to present the current state of ${user.id === requester.id ? 'your' : `${user.displayName}'s`} contributions to our literary community.`)
-        .addFields(
-            { name: 'This Month', value: `${monthlyCount} contribution${monthlyCount !== 1 ? 's' : ''}`, inline: true },
-            { name: 'Requirement Status', value: monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? '✅ Monthly requirement graciously fulfilled' : '📝 Monthly contribution still awaited', inline: true },
-            { name: 'All Time Contributions', value: `${totalAllTime}`, inline: true }
-        )
-        .setColor(monthlyCount >= MONTHLY_FEEDBACK_REQUIREMENT ? 0x00AA55 : 0xFF9900);
-}
-
-// ===== STAFF COMMANDS =====
-async function handleFeedbackAddCommand(message, args) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
+    // Check credits
+    if (user.currentCredits < totalPrice) {
+        const needed = totalPrice - user.currentCredits;
+        const embed = new EmbedBuilder()
+            .setTitle('Insufficient Credits ☝️')
+            .addFields({
+                name: 'Required', value: `${totalPrice} credits`, inline: true
+            }, {
+                name: 'Current', value: `${user.currentCredits} credits`, inline: true
+            }, {
+                name: 'Needed', value: `${needed} more credits`, inline: true
+            })
+            .setColor(0xFF6B6B);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose feedback record you wish to enhance.');
-    
-    const amount = Math.max(1, parseInt(args[1]) || 1);
-    await addFeedbackToUser(user.id, amount);
-    
-    const embed = createFeedbackModificationEmbed(user, amount, 'added');
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleFeedbackAddSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
-    await addFeedbackToUser(user.id, amount);
-    
-    const embed = createFeedbackModificationEmbed(user, amount, 'added');
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function addFeedbackToUser(userId, amount) {
-    const currentCount = getUserMonthlyFeedback(userId);
-    const newCount = currentCount + amount;
-    setUserMonthlyFeedback(userId, newCount);
-    
-    const userRecord = getUserData(userId);
-    userRecord.totalFeedbackAllTime += amount;
-    addDinars(userId, amount * DINARS_PER_FEEDBACK);
-    
-    await saveData();
-    return { currentCount, newCount, newBalance: userRecord.dinars };
-}
-
-function createFeedbackModificationEmbed(user, amount, action) {
-    const userRecord = getUserData(user.id);
-    const monthlyCount = getUserMonthlyFeedback(user.id);
-    
-    return new EmbedBuilder()
-        .setTitle(`Feedback Contributions ${action === 'added' ? 'Enhanced' : 'Adjusted'} ☝️`)
-        .setDescription(`I have ${action === 'added' ? 'graciously added to' : 'reduced'} ${user}'s feedback record, as ${action === 'added' ? 'befits their continued dedication to our literary community' : 'you have instructed, though I confess it pains me to diminish any writer\'s standing'}.`)
-        .addFields(
-            { name: 'Monthly Count', value: `${monthlyCount}`, inline: true },
-            { name: 'All-Time Total', value: `${userRecord.totalFeedbackAllTime}`, inline: true },
-            { name: `Points ${action === 'added' ? 'Added' : 'Removed'}`, value: `${amount}`, inline: true },
-            ...(action === 'added' ? [
-                { name: 'Dinars Awarded', value: `💰 +${amount * DINARS_PER_FEEDBACK} dinars`, inline: true },
-                { name: 'New Balance', value: `💰 ${userRecord.dinars} dinars`, inline: true }
-            ] : [])
-        )
-        .setColor(action === 'added' ? 0x00AA55 : 0xFF6B6B);
-}
-
-async function handleFeedbackRemoveCommand(message, args) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
-    }
-    
-    const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose feedback record requires adjustment.');
-    
-    const amount = Math.max(1, parseInt(args[1]) || 1);
-    await removeFeedbackFromUser(user.id, amount);
-    
-    const embed = createFeedbackModificationEmbed(user, amount, 'removed');
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleFeedbackRemoveSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
-    await removeFeedbackFromUser(user.id, amount);
-    
-    const embed = createFeedbackModificationEmbed(user, amount, 'removed');
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function removeFeedbackFromUser(userId, amount) {
-    const currentCount = getUserMonthlyFeedback(userId);
-    const newCount = Math.max(0, currentCount - amount);
-    setUserMonthlyFeedback(userId, newCount);
-    
-    const userRecord = getUserData(userId);
-    userRecord.totalFeedbackAllTime = Math.max(0, userRecord.totalFeedbackAllTime - amount);
-    
-    await saveData();
-    return { currentCount, newCount };
-}
-
-async function handleFeedbackResetCommand(message) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
-    }
-    
-    const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose record you wish to reset to a clean slate.');
-    
-    const resetData = await performCompleteReset(user.id, message.guild);
-    const embed = createResetEmbed(user, resetData);
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleFeedbackResetSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const resetData = await performCompleteReset(user.id, interaction.guild);
-    const embed = createResetEmbed(user, resetData);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function performCompleteReset(userId, guild) {
-    const previousCount = getUserMonthlyFeedback(userId);
-    const userRecord = getUserData(userId);
-    const previousAllTime = userRecord.totalFeedbackAllTime;
-    const previousDinars = userRecord.dinars;
-    const hadShelfAccess = userRecord.purchases.includes('shelf');
-    
-    // COMPLETE RESET
-    setUserMonthlyFeedback(userId, 0);
-    userRecord.totalFeedbackAllTime = 0;
-    userRecord.dinars = 0;
-    userRecord.bookshelfPosts = 0;
-    userRecord.purchases = userRecord.purchases.filter(item => item !== 'shelf');
-    
-    // Remove roles
-    const targetMember = guild.members.cache.get(userId);
-    if (targetMember) {
-        await removeUserRoles(targetMember, guild);
-    }
-    
-    // Close threads
-    const closedThreads = await closeUserBookshelfThreads(guild, userId);
-    
-    await saveData();
-    
-    return {
-        previousCount,
-        previousAllTime,
-        previousDinars,
-        hadShelfAccess,
-        closedThreads
-    };
-}
-
-async function removeUserRoles(member, guild) {
-    const rolesToRemove = ['Shelf Owner', 'reader'];
-    
-    for (const roleName of rolesToRemove) {
-        const role = guild.roles.cache.find(r => r.name === roleName);
-        if (role && member.roles.cache.has(role.id)) {
-            try {
-                await member.roles.remove(role);
-                console.log(`Removed ${roleName} role from ${member.displayName}`);
-            } catch (error) {
-                console.log(`Failed to remove ${roleName} role:`, error.message);
+    // Process purchase
+    if (await spendCredits(interaction.user.id, totalPrice)) {
+        if (itemKey === 'lease') {
+            await addLeases(interaction.user.id, finalQuantity);
+        } else if (!item.consumable) {
+            const updatedUser = await getUserData(interaction.user.id);
+            const newPurchases = [...updatedUser.purchases, itemKey];
+            await updateUserData(interaction.user.id, { purchases: newPurchases });
+            await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [interaction.user.id, itemKey]);
+            
+            // Assign role if needed
+            if (item.role) {
+                await assignRole(interaction.member, interaction.guild, item.role);
+            }
+            
+            // Handle color roles
+            if (item.category === 'color') {
+                await assignColorRole(interaction.member, interaction.guild, itemKey);
             }
         }
-    }
-}
-
-function createResetEmbed(user, resetData) {
-    return new EmbedBuilder()
-        .setTitle('Complete Literary Record Reset ☝️')
-        .setDescription(`${user}'s entire literary standing has been reset to a clean slate, as you have decreed. All achievements, wealth, and privileges have been stripped away. Perhaps this complete fresh beginning shall inspire true dedication.`)
-        .addFields(
-            { name: 'Previous Monthly Count', value: `${resetData.previousCount}`, inline: true },
-            { name: 'Previous All-Time Total', value: `${resetData.previousAllTime}`, inline: true },
-            { name: 'Previous Balance', value: `💰 ${resetData.previousDinars} dinars`, inline: true },
-            { name: 'Current Status', value: '**Everything reset to zero**', inline: false },
-            { name: 'Bookshelf Access', value: resetData.hadShelfAccess ? '📚 Access completely revoked' : '📚 No access', inline: true },
-            { name: 'Threads Closed', value: `🔒 ${resetData.closedThreads} thread${resetData.closedThreads !== 1 ? 's' : ''} archived and locked`, inline: true }
-        )
-        .setColor(0xFF6B6B);
-}
-
-// ===== REMAINING IMPLEMENTATIONS =====
-// (For brevity, I'll implement the remaining commands with the same pattern)
-
-async function handleDinarsAddCommand(message, args) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
-    }
-    
-    const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose dinar balance you wish to enhance.');
-    
-    const amount = parseInt(args[1]);
-    if (!amount || amount <= 0) return replyTemporaryMessage(message, 'Please specify a positive amount of dinars to add.');
-    
-    const result = await modifyUserDinars(user.id, amount, 'add');
-    const embed = createDinarModificationEmbed(user, amount, result, 'added');
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleDinarsAddSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = interaction.options.getInteger('amount');
-    
-    if (amount <= 0) {
-        const embed = new EmbedBuilder()
-            .setTitle('Invalid Amount')
-            .setDescription('Please specify a positive amount of dinars to add.')
-            .setColor(0xFF6B6B);
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
-    
-    const result = await modifyUserDinars(user.id, amount, 'add');
-    const embed = createDinarModificationEmbed(user, amount, result, 'added');
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function handleDinarsRemoveCommand(message, args) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
-    }
-    
-    const user = message.mentions.users.first();
-    if (!user) return replyTemporaryMessage(message, 'Pray, mention the writer whose dinar balance requires adjustment.');
-    
-    const amount = parseInt(args[1]);
-    if (!amount || amount <= 0) return replyTemporaryMessage(message, 'Please specify a positive amount of dinars to remove.');
-    
-    const result = await modifyUserDinars(user.id, amount, 'remove');
-    const embed = createDinarModificationEmbed(user, amount, result, 'removed');
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleDinarsRemoveSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = interaction.options.getInteger('amount');
-    
-    if (amount <= 0) {
-        const embed = new EmbedBuilder()
-            .setTitle('Invalid Amount')
-            .setDescription('Please specify a positive amount of dinars to remove.')
-            .setColor(0xFF6B6B);
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
-    
-    const result = await modifyUserDinars(user.id, amount, 'remove');
-    const embed = createDinarModificationEmbed(user, amount, result, 'removed');
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function modifyUserDinars(userId, amount, action) {
-    const userRecord = getUserData(userId);
-    const previousBalance = userRecord.dinars;
-    
-    if (action === 'add') {
-        addDinars(userId, amount);
-    } else {
-        userRecord.dinars = Math.max(0, userRecord.dinars - amount);
-    }
-    
-    await saveData();
-    return { previousBalance, newBalance: userRecord.dinars };
-}
-
-function createDinarModificationEmbed(user, amount, result, action) {
-    return new EmbedBuilder()
-        .setTitle(`Dinar Treasury ${action === 'added' ? 'Enhanced' : 'Adjusted'} ☝️`)
-        .setDescription(`I have ${action === 'added' ? 'graciously added to' : 'reduced'} ${user}'s dinar treasury, as ${action === 'added' ? 'befits your administrative authority in our literary realm' : 'you have instructed, though I confess it pains me to diminish any writer\'s wealth'}.`)
-        .addFields(
-            { name: 'Previous Balance', value: `💰 ${result.previousBalance} dinars`, inline: true },
-            { name: 'Current Balance', value: `💰 ${result.newBalance} dinars`, inline: true },
-            { name: `Dinars ${action === 'added' ? 'Added' : 'Removed'}`, value: `💰 ${action === 'added' ? '+' : '-'}${Math.min(amount, result.previousBalance)} dinars`, inline: true }
-        )
-        .setColor(action === 'added' ? 0x00AA55 : 0xFF6B6B);
-}
-
-async function handleBalanceCommand(message) {
-    const user = message.mentions.users.first() || message.author;
-    const embed = createBalanceEmbed(user);
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleBalanceSlashCommand(interaction) {
-    const user = interaction.options.getUser('user') || interaction.user;
-    const embed = createBalanceEmbed(user);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-function createBalanceEmbed(user) {
-    const userId = user.id;
-    const userRecord = getUserData(userId);
-    
-    return new EmbedBuilder()
-        .setTitle(`${user.displayName}'s Literary Standing ☝️`)
-        .setDescription(`Allow me to present the current economic and literary standing of this distinguished writer.`)
-        .addFields(
-            { name: 'Current Balance', value: `💰 ${userRecord.dinars} dinars`, inline: true },
-            { name: 'Lifetime Feedback', value: `📝 ${userRecord.totalFeedbackAllTime} contribution${userRecord.totalFeedbackAllTime !== 1 ? 's' : ''}`, inline: true },
-            { name: 'Bookshelf Access', value: getBookshelfAccessStatus(userId), inline: true },
-            { name: 'Message Credits', value: getPostCreditStatus(userId), inline: false },
-            { name: 'Purchases Made', value: userRecord.purchases.length > 0 ? userRecord.purchases.map(item => `• ${STORE_ITEMS[item]?.name || item}`).join('\n') : 'None yet', inline: false }
-        )
-        .setColor(canPostInBookshelf(userId) ? 0x00AA55 : 0xFF9900);
-}
-
-async function handleStoreCommand(message) {
-    const embed = createStoreEmbed();
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleStoreSlashCommand(interaction) {
-    const embed = createStoreEmbed();
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-function createStoreEmbed() {
-    return new EmbedBuilder()
-        .setTitle('Type&Draft Literary Emporium ☝️')
-        .setDescription('Welcome to our humble establishment, where dedication to the craft is rewarded with tangible benefits. Examine our current offerings, crafted with the utmost care for our literary community.')
-        .addFields(
-            { name: '📚 Bookshelf Access', value: `Grants you the ability to post messages in the #bookshelf forum\n**Price:** ${STORE_ITEMS.shelf.price} dinars\n**Requirements:** ${MINIMUM_FEEDBACK_FOR_SHELF}+ feedback contributions\n**Roles granted:** Shelf Owner + reader`, inline: false },
-            { name: 'How to Earn Dinars', value: `• **Provide feedback** to fellow writers and log it with \`/feedback\`\n• **Earn ${DINARS_PER_FEEDBACK} dinars** per logged feedback contribution\n• **Build your reputation** through meaningful engagement`, inline: false }
-        )
-        .setColor(0x2F3136)
-        .setFooter({ text: 'All prices are final. Purchases support our thriving literary community.' });
-}
-
-async function handleBuyCommand(message, args) {
-    const itemKey = args[0]?.toLowerCase();
-    if (!itemKey || !STORE_ITEMS[itemKey]) {
-        return replyTemporaryMessage(message, 'Pray, specify a valid item to purchase. Use `/store` to view available items.');
-    }
-    
-    const result = await processPurchase(message.author.id, itemKey, message.member, message.guild);
-    const embed = createPurchaseResultEmbed(message.author, itemKey, result);
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleBuySlashCommand(interaction) {
-    const itemKey = interaction.options.getString('item');
-    const result = await processPurchase(interaction.user.id, itemKey, interaction.member, interaction.guild);
-    const embed = createPurchaseResultEmbed(interaction.user, itemKey, result);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function processPurchase(userId, itemKey, member, guild) {
-    const item = STORE_ITEMS[itemKey];
-    const userRecord = getUserData(userId);
-    
-    if (userRecord.purchases.includes(itemKey)) {
-        return { success: false, reason: 'already_purchased' };
-    }
-    
-    if (itemKey === 'shelf' && userRecord.totalFeedbackAllTime < MINIMUM_FEEDBACK_FOR_SHELF) {
-        return { 
-            success: false, 
-            reason: 'insufficient_feedback',
-            needed: MINIMUM_FEEDBACK_FOR_SHELF - userRecord.totalFeedbackAllTime,
-            current: userRecord.totalFeedbackAllTime
-        };
-    }
-    
-    if (userRecord.dinars < item.price) {
-        return {
-            success: false,
-            reason: 'insufficient_funds',
-            needed: item.price - userRecord.dinars,
-            current: userRecord.dinars,
-            price: item.price
-        };
-    }
-    
-    if (spendDinars(userId, item.price)) {
-        userRecord.purchases.push(itemKey);
         
-        if (item.role) {
-            await assignPurchaseRoles(member, guild, itemKey);
+        const embed = new EmbedBuilder()
+            .setTitle('Purchase Successful ☝️')
+            .addFields(
+                { name: 'Item', value: `${item.emoji} ${item.name}${finalQuantity > 1 ? ` x${finalQuantity}` : ''}`, inline: true },
+                { name: 'Price', value: `💰 ${totalPrice} credits`, inline: true }
+            )
+            .setColor(0x00AA55);
+        
+        if (itemKey === 'shelf') {
+            embed.addFields({
+                name: 'Next Steps',
+                value: 'Staff will review and assign the **reader** role based on your feedback quality. Then you can create bookshelf threads!',
+                inline: false
+            });
         }
         
-        await saveData();
-        return { success: true, newBalance: userRecord.dinars };
+        await replyTemporary(interaction, { embeds: [embed] });
     }
-    
-    return { success: false, reason: 'unknown_error' };
 }
 
-async function assignPurchaseRoles(member, guild, itemKey) {
-    const roleNames = itemKey === 'shelf' ? ['Shelf Owner', 'reader'] : [STORE_ITEMS[itemKey].role];
+async function assignRole(member, guild, roleName) {
+    let role = guild.roles.cache.find(r => r.name === roleName);
     
-    for (const roleName of roleNames) {
-        if (!roleName) continue;
+    if (!role) {
+        try {
+            role = await guild.roles.create({
+                name: roleName,
+                color: 0x8B4513,
+                reason: `Store purchase role`
+            });
+        } catch (error) {
+            console.log(`Failed to create role ${roleName}:`, error.message);
+            return;
+        }
+    }
+    
+    try {
+        await member.roles.add(role);
+        console.log(`Added ${roleName} role to ${member.displayName}`);
+    } catch (error) {
+        console.log(`Failed to add ${roleName} role:`, error.message);
+    }
+}
+
+async function assignColorRole(member, guild, itemKey) {
+    const item = STORE_ITEMS[itemKey];
+    
+    // Remove existing color roles
+    const existingColorRoles = member.roles.cache.filter(role => 
+        Object.values(STORE_ITEMS).some(storeItem => 
+            storeItem.category === 'color' && storeItem.name === role.name
+        )
+    );
+    
+    for (const role of existingColorRoles.values()) {
+        try {
+            await member.roles.remove(role);
+        } catch (error) {
+            console.log(`Failed to remove color role:`, error.message);
+        }
+    }
+    
+    // Create/assign new color role
+    let colorRole = guild.roles.cache.find(r => r.name === item.name);
+    if (!colorRole) {
+        try {
+            colorRole = await guild.roles.create({
+                name: item.name,
+                color: item.color,
+                reason: `Color role purchase: ${item.name}`
+            });
+        } catch (error) {
+            console.log(`Failed to create color role:`, error.message);
+            return;
+        }
+    }
+    
+    try {
+        await member.roles.add(colorRole);
+        console.log(`Added ${item.name} color role to ${member.displayName}`);
+    } catch (error) {
+        console.log(`Failed to add color role:`, error.message);
+    }
+}
+
+async function handleAccessCommand(interaction) {
+    const targetUser = interaction.options.getUser('user') || interaction.user;
+    const targetMember = interaction.options.getMember('user') || interaction.member;
+    
+    const bookshelfStatus = await getBookshelfAccessStatus(targetUser.id, targetMember, interaction.guild);
+    const readForReadStatus = await getReadForReadAccess(targetUser.id);
+    const completeDraftsStatus = await getCompleteDraftsAccess(targetUser.id, targetMember);
+    
+    const channels = getClickableChannelMentions(interaction.guild);
+    
+    const embed = new EmbedBuilder()
+        .setTitle(`Access Status - ${targetUser.displayName} ☝️`)
+        .addFields(
+            { name: `📚 ${channels.bookshelf}`, value: bookshelfStatus, inline: false },
+            { name: `🔍 ${channels.readForReadFinder}`, value: readForReadStatus, inline: false },
+            { name: `📖 ${channels.completeDrafts}`, value: completeDraftsStatus, inline: false }
+        )
+        .setColor(0x5865F2);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleHelpCommand(interaction) {
+    const channels = getClickableChannelMentions(interaction.guild);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Type&Draft Feedback System Guide ☝️')
+        .addFields(
+            { 
+                name: '📝 Two-Tier Feedback System', 
+                value: `**💬 Comment Feedback (1 credit):** Inline comments within Google Docs\n**📄 Document Feedback (3 credits):** Comprehensive feedback in separate document\n\n*Document feedback requires reading all previous chapters!*`, 
+                inline: false 
+            },
+            { 
+                name: '📈 Chapter Multipliers', 
+                value: `**Early** (Ch 1-2): 1.0x\n**Developing** (Ch 3-5): 1.25x\n**Established** (Ch 6-10): 1.5x\n**Epic Saga** (Ch 11+): 1.75x\n\n*Later chapters worth more because you read more!*`, 
+                inline: false 
+            },
+            { 
+                name: '⭐ Quality System', 
+                value: `Community rates your feedback 1-4 stars. Higher average = better credit multipliers for future feedback!`, 
+                inline: false 
+            },
+            { 
+                name: '📅 Monthly Requirements', 
+                value: `Choose one:\n• **2** document feedbacks\n• **6** comment feedbacks\n• **1** document + **3** comments`, 
+                inline: false 
+            },
+            { 
+                name: 'How to Start', 
+                value: `1. Reach **Level 5**\n2. Visit ${channels.bookshelfFeedback}\n3. Find a story and give feedback\n4. Use \`/feedback type:[comment/document] chapter:[number]\`\n5. Earn credits and build your reputation!`, 
+                inline: false 
+            },
+            {
+                name: '🎯 Key Commands',
+                value: '`/feedback` - Log feedback\n`/rate_feedback` - Rate others\n`/balance` - Check stats\n`/monthly` - Check progress\n`/store` - Browse marketplace\n`/access` - Check permissions',
+                inline: false
+            }
+        )
+        .setColor(0x5865F2);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleHallOfFameCommand(interaction) {
+    const type = interaction.options.getString('type') || 'monthly';
+    
+    let embed;
+    
+    if (type === 'quality') {
+        // Quality leaderboard
+        const qualityLeaders = await global.db.db.all(`
+            SELECT u.user_id, u.total_feedback_all_time, u.quality_ratings
+            FROM users u
+            WHERE u.total_feedback_all_time > 0 
+            AND json_extract(u.quality_ratings, '$.total') >= 3
+            ORDER BY json_extract(u.quality_ratings, '$.average') DESC
+            LIMIT 10
+        `);
         
-        let role = guild.roles.cache.find(r => r.name === roleName);
-        if (!role) {
+        let description = '';
+        for (let i = 0; i < qualityLeaders.length; i++) {
+            const user = qualityLeaders[i];
+            const quality = JSON.parse(user.quality_ratings);
             try {
-                const roleColor = roleName === 'Shelf Owner' ? 0x8B4513 : 0x5865F2;
-                role = await guild.roles.create({
-                    name: roleName,
-                    color: roleColor,
-                    reason: `Role for store purchase: ${itemKey}`
-                });
-                console.log(`Created role: ${roleName}`);
+                const discordUser = await client.users.fetch(user.user_id);
+                const medal = i === 0 ? '👑' : i === 1 ? '🥈' : i === 2 ? '🥉' : `⚔️`;
+                description += `${medal} **${discordUser.displayName}**\n   ⭐ ${quality.average.toFixed(2)}/4.0 • ${quality.total} judgments\n\n`;
             } catch (error) {
-                console.log(`Failed to create role ${roleName}:`, error.message);
                 continue;
             }
         }
         
-        try {
-            await member.roles.add(role);
-            console.log(`Added ${roleName} role to ${member.displayName}`);
-        } catch (error) {
-            console.log(`Failed to add ${roleName} role:`, error.message);
-        }
-    }
-}
-
-function createPurchaseResultEmbed(user, itemKey, result) {
-    const item = STORE_ITEMS[itemKey];
-    
-    if (!result.success) {
-        const errorEmbeds = {
-            already_purchased: new EmbedBuilder()
-                .setTitle('Item Already Acquired')
-                .setDescription(`You have already acquired ${item.name}, dear writer. There is no need for duplicate purchases.`)
-                .setColor(0xFF9900),
-            
-            insufficient_feedback: new EmbedBuilder()
-                .setTitle('Insufficient Literary Contributions')
-                .setDescription(`I regret to inform you that bookshelf access requires a minimum of **${MINIMUM_FEEDBACK_FOR_SHELF} feedback contributions**. You currently have ${result.current}.`)
-                .addFields({
-                    name: 'How to Qualify',
-                    value: `• Provide feedback to fellow writers\n• Log each contribution with \`/feedback\`\n• Return when you have ${result.needed} more contribution${result.needed === 1 ? '' : 's'}`,
-                    inline: false
-                })
-                .setColor(0xFF6B6B),
-            
-            insufficient_funds: new EmbedBuilder()
-                .setTitle('Insufficient Funds')
-                .setDescription(`I fear your current balance of ${result.current} dinars is insufficient for this purchase.`)
-                .addFields({
-                    name: 'Required Amount', value: `${result.price} dinars`, inline: true
-                }, {
-                    name: 'Still Needed', value: `${result.needed} dinars (${Math.ceil(result.needed / DINARS_PER_FEEDBACK)} more feedback contributions)`, inline: true
-                })
-                .setColor(0xFF6B6B)
-        };
+        embed = new EmbedBuilder()
+            .setTitle('⭐ Masters of Quality ☝️')
+            .setDescription(description || 'None have achieved mastery yet.')
+            .setColor(0xFFD700);
+    } else {
+        // Monthly or all-time leaderboard
+        const monthKey = getCurrentMonthKey();
+        let leaders;
         
-        return errorEmbeds[result.reason] || new EmbedBuilder().setTitle('Purchase Failed').setColor(0xFF6B6B);
+        if (type === 'monthly') {
+            leaders = await global.db.db.all(`
+                SELECT user_id, (doc_feedback_count * 3 + comment_feedback_count) as score
+                FROM monthly_feedback 
+                WHERE month_key = ? AND score > 0
+                ORDER BY score DESC 
+                LIMIT 10
+            `, [monthKey]);
+        } else {
+            leaders = await global.db.db.all(`
+                SELECT user_id, total_feedback_all_time as score
+                FROM users 
+                WHERE total_feedback_all_time > 0
+                ORDER BY score DESC 
+                LIMIT 10
+            `);
+        }
+        
+        let description = '';
+        for (let i = 0; i < leaders.length; i++) {
+            const leader = leaders[i];
+            try {
+                const discordUser = await client.users.fetch(leader.user_id);
+                const medal = i === 0 ? '👑' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                description += `${medal} **${discordUser.displayName}** • ${leader.score} contributions\n`;
+            } catch (error) {
+                continue;
+            }
+        }
+        
+        embed = new EmbedBuilder()
+            .setTitle(`${type === 'monthly' ? '🏆 Monthly Champions' : '👑 Legendary Contributors'} ☝️`)
+            .setDescription(description || 'The halls await their first champions.')
+            .setColor(0xFFD700);
     }
     
-    return new EmbedBuilder()
-        .setTitle('Purchase Completed Successfully ☝️')
-        .setDescription(`Congratulations, ${user}! Your acquisition of ${item.name} has been processed with the utmost care.`)
-        .addFields(
-            { name: 'Item Purchased', value: `${item.emoji} ${item.name}`, inline: true },
-            { name: 'Price Paid', value: `💰 ${item.price} dinars`, inline: true },
-            { name: 'Remaining Balance', value: `💰 ${result.newBalance} dinars`, inline: true },
-            { name: 'New Privileges', value: itemKey === 'shelf' ? '📚 You may now post messages in the #bookshelf forum!\n📝 First message is free, then 1 feedback = 1 additional message\n🎭 Roles assigned: Shelf Owner + reader' : item.description, inline: false }
-        )
-        .setColor(0x00AA55);
-}
-
-async function handleStatsCommand(message) {
-    if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        return replyTemporaryMessage(message, 'I regret that such privileged information is reserved for those with administrative authority, my lord.');
-    }
-    
-    const embed = await createStatsEmbed(message.guild);
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleStatsSlashCommand(interaction) {
-    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-        const embed = new EmbedBuilder()
-            .setTitle('Insufficient Authority')
-            .setDescription('I regret that such privileged information is reserved for those with administrative authority, my lord.')
-            .setColor(0xFF6B6B);
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
-    
-    const embed = await createStatsEmbed(interaction.guild);
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-async function createStatsEmbed(guild) {
-    const totalMembers = guild.memberCount;
-    const verifiedCount = Object.keys(userData).length;
-    
-    const monthKey = getCurrentMonthKey();
-    let monthlyContributors = 0;
-    for (const [userId, userMonthlyData] of Object.entries(monthlyFeedback)) {
-        if (userMonthlyData[monthKey] && userMonthlyData[monthKey] > 0) {
-            monthlyContributors++;
-        }
-    }
-    
-    const contributionRate = verifiedCount > 0 ? Math.round((monthlyContributors / verifiedCount) * 100) : 0;
-    
-    return new EmbedBuilder()
-        .setTitle('Type&Draft Community Statistics ☝️')
-        .setDescription('Allow me to present the current state of our literary realm, as observed from my position of humble service.')
-        .addFields(
-            { name: 'Total Writers in Our Halls', value: `${totalMembers} souls`, inline: true },
-            { name: 'Writers Under My Watch', value: `${verifiedCount} tracked`, inline: true },
-            { name: 'Active Contributors This Month', value: `${monthlyContributors} writers`, inline: true },
-            { name: 'Monthly Participation Rate', value: `${contributionRate}%`, inline: true },
-            { name: 'Community Health', value: contributionRate >= 70 ? '✅ Flourishing' : contributionRate >= 50 ? '⚠️ Moderate' : '🔴 Requires attention', inline: true },
-            { name: 'Current Month', value: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }), inline: true }
-        )
-        .setColor(contributionRate >= 70 ? 0x00AA55 : contributionRate >= 50 ? 0xFF9900 : 0xFF4444)
-        .setFooter({ text: 'These numbers reflect the dedication of our writing community to mutual growth' });
-}
-
-async function handleSetupBookshelfCommand(message) {
-    if (!hasStaffPermissions(message.member)) {
-        return replyTemporaryMessage(message, 'I fear you lack the necessary authority to conduct such administrative actions, my lord.');
-    }
-    
-    const success = await setupBookshelfPermissions(message.guild);
-    const embed = createSetupEmbed(success);
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleSetupBookshelfSlashCommand(interaction) {
+// ===== STAFF COMMANDS =====
+async function handleFeedbackAddCommand(interaction) {
     if (!hasStaffPermissions(interaction.member)) {
         return await sendStaffOnlyMessage(interaction, true);
     }
     
-    const success = await setupBookshelfPermissions(interaction.guild);
-    const embed = createSetupEmbed(success);
+    const user = interaction.options.getUser('user');
+    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
+    
+    const userData = await getUserData(user.id);
+    await updateUserData(user.id, {
+        totalFeedbackAllTime: userData.totalFeedbackAllTime + amount
+    });
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Feedback Added ☝️')
+        .addFields(
+            { name: 'Amount Added', value: `+${amount}`, inline: true },
+            { name: 'New Total', value: `${userData.totalFeedbackAllTime + amount}`, inline: true }
+        )
+        .setColor(0x00AA55);
+    
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-function createSetupEmbed(success) {
-    const embed = new EmbedBuilder()
-        .setTitle(success ? 'Bookshelf Forum Configured ☝️' : 'Configuration Incomplete')
-        .setDescription(success ? 
-            'I have successfully configured the bookshelf forum permissions. Only those with "Shelf Owner" role may now create threads within.' :
-            'I encountered difficulties while configuring the bookshelf forum. Please ensure the forum exists and the bot has proper permissions.')
-        .setColor(success ? 0x00AA55 : 0xFF6B6B);
-    
-    if (success) {
-        embed.addFields({
-            name: 'Permissions Set',
-            value: '• **@everyone**: Cannot create threads\n• **Shelf Owner role**: Can create threads\n• **Moderators**: Retain all permissions',
-            inline: false
-        });
-    } else {
-        embed.addFields({
-            name: 'Manual Setup Required',
-            value: '1. Create a forum channel named "bookshelf"\n2. Set @everyone permissions to deny "Create Public Threads"\n3. Set "Shelf Owner" role to allow "Create Public Threads"',
-            inline: false
-        });
+async function handleCreditAddCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
     }
     
-    return embed;
-}
-
-async function handleHelpCommand(message) {
-    const embed = createHelpEmbed();
-    await replyTemporaryMessage(message, { embeds: [embed] });
-}
-
-async function handleHelpSlashCommand(interaction) {
-    const embed = createHelpEmbed();
+    const user = interaction.options.getUser('user');
+    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
+    
+    const previousBalance = (await getUserData(user.id)).currentCredits;
+    await addCredits(user.id, amount);
+    const newBalance = (await getUserData(user.id)).currentCredits;
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Credits Added ☝️')
+        .addFields(
+            { name: 'Previous', value: `${previousBalance}`, inline: true },
+            { name: 'Added', value: `+${amount}`, inline: true },
+            { name: 'New Total', value: `${newBalance}`, inline: true }
+        )
+        .setColor(0x00AA55);
+    
     await replyTemporary(interaction, { embeds: [embed] });
 }
 
-function createHelpEmbed() {
-    return new EmbedBuilder()
-        .setTitle('Commands at Your Service ☝️')
-        .setDescription('I am at your disposal, dear writer. Allow me to present the available commands for our literary community:')
+async function handleFeedbackRemoveCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
+    
+    const currentCount = await getUserMonthlyFeedback(user.id);
+    await setUserMonthlyFeedback(user.id, 'document', Math.max(0, currentCount.docs - Math.min(amount, currentCount.docs)));
+    
+    const userRecord = await getUserData(user.id);
+    await updateUserData(user.id, {
+        totalFeedbackAllTime: Math.max(0, userRecord.totalFeedbackAllTime - amount),
+        currentCredits: Math.max(0, userRecord.currentCredits - (amount * 3))
+    });
+    
+    const embed = new EmbedBuilder()
+        .setTitle('⚔️ Feedback Record Adjusted ☝️')
         .addFields(
+            { name: 'Feedback Removed', value: `-${amount}`, inline: true },
+            { name: 'Credits Deducted', value: `-${amount * 3}`, inline: true }
+        )
+        .setColor(0xFF6B6B);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleCreditRemoveCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
+    
+    const userRecord = await getUserData(user.id);
+    const previousBalance = userRecord.currentCredits;
+    const newBalance = Math.max(0, userRecord.currentCredits - amount);
+    
+    await updateUserData(user.id, { currentCredits: newBalance });
+    
+    const embed = new EmbedBuilder()
+        .setTitle('💰 Treasury Adjusted ☝️')
+        .addFields(
+            { name: 'Previous', value: `${previousBalance}`, inline: true },
+            { name: 'Removed', value: `-${Math.min(amount, previousBalance)}`, inline: true },
+            { name: 'New Total', value: `${newBalance}`, inline: true }
+        )
+        .setColor(0xFF6B6B);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleLeaseAddCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
+    
+    const previousLeases = (await getUserData(user.id)).chapterLeases;
+    await addLeases(user.id, amount);
+    const newLeases = (await getUserData(user.id)).chapterLeases;
+    
+    const embed = new EmbedBuilder()
+        .setTitle('📝 Chapter Leases Granted ☝️')
+        .addFields(
+            { name: 'Previous', value: `${previousLeases}`, inline: true },
+            { name: 'Added', value: `+${amount}`, inline: true },
+            { name: 'New Total', value: `${newLeases}`, inline: true }
+        )
+        .setColor(0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleSetupBookshelfCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    const member = interaction.guild.members.cache.get(user.id);
+    
+    const userRecord = await getUserData(user.id);
+    
+    if (userRecord.purchases.includes('shelf')) {
+        const embed = new EmbedBuilder()
+            .setTitle('⚔️ Already Granted ☝️')
+            .setColor(0xFF9900);
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    // Grant shelf access
+    const newPurchases = [...userRecord.purchases, 'shelf'];
+    await updateUserData(user.id, { purchases: newPurchases });
+    await global.db.db.run('INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)', [user.id, 'shelf']);
+    
+    // Assign role
+    await assignRole(member, interaction.guild, 'Shelf Owner');
+    
+    const embed = new EmbedBuilder()
+        .setTitle('📚 Bookshelf Access Granted ☝️')
+        .addFields(
+            { name: 'Privileges', value: '⚔️ Shelf Owner role\n🏰 Thread creation access', inline: false },
+            { name: 'Next Steps', value: 'Assign **reader** role when appropriate', inline: false }
+        )
+        .setColor(0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleUserResetCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    const member = interaction.guild.members.cache.get(user.id);
+    
+    // Get current data for the embed
+    const userData = await getUserData(user.id);
+    const monthlyData = await getUserMonthlyFeedback(user.id);
+    
+    // Close user's bookshelf threads
+    const closedThreads = await closeUserBookshelfThreads(interaction.guild, user.id);
+    
+    // Remove roles
+    if (member) {
+        await removeUserRoles(member, interaction.guild);
+    }
+    
+    // Complete database reset
+    await resetUserProgress(user.id, interaction.guild);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('⚔️ Complete User Reset Executed ☝️')
+        .setDescription(`**${user.displayName}** has been stripped of all progress and returned to a blank slate.`)
+        .addFields(
+            { name: '📊 Previous Stats', value: `📝 ${userData.totalFeedbackAllTime} total feedback\n💰 ${userData.currentCredits} credits\n📄 ${userData.chapterLeases} leases`, inline: true },
+            { name: '📅 Monthly Progress', value: `📄 ${monthlyData.docs} docs\n💬 ${monthlyData.comments} comments`, inline: true },
+            { name: '🏰 Actions Taken', value: `🗑️ All data purged\n🔒 ${closedThreads} threads closed\n👑 Roles removed\n💾 Database cleaned`, inline: true }
+        )
+        .setColor(0xFF4444)
+        .setFooter({ text: 'This action cannot be undone' });
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleUnpardonCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    
+    try {
+        const monthKey = getCurrentMonthKey();
+        const success = await global.db.removePardon(user.id, monthKey);
+        
+        if (success) {
+            const embed = new EmbedBuilder()
+                .setTitle('⚔️ Pardon Revoked ☝️')
+                .addFields({ name: 'User', value: user.displayName, inline: true })
+                .setColor(0xFF6B6B);
+            
+            await replyTemporary(interaction, { embeds: [embed] });
+        } else {
+            const embed = new EmbedBuilder()
+                .setTitle('🛡️ No Pardon Found ☝️')
+                .setColor(0xFF9900);
+            
+            await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        }
+    } catch (error) {
+        console.error('Error removing pardon:', error);
+    }
+}
+
+async function handlePardonedLastMonthCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const lastMonthKey = getLastMonthKey();
+    
+    try {
+        const pardonedUsers = await global.db.getPardonedUsersForMonth(lastMonthKey);
+        
+        if (pardonedUsers.length === 0) {
+            const embed = new EmbedBuilder()
+                .setTitle('🏰 No Pardons Last Month ☝️')
+                .setDescription('No members required clemency. How admirably disciplined our realm was!')
+                .setColor(0x2F3136);
+            
+            return await replyTemporary(interaction, { embeds: [embed] });
+        }
+        
+        let pardonedList = '';
+        for (const record of pardonedUsers.slice(0, 20)) {
+            try {
+                const member = await interaction.guild.members.fetch(record.user_id);
+                pardonedList += `⚔️ **${member.displayName}**\n`;
+            } catch (error) {
+                pardonedList += `👻 *[Left Realm] (${record.user_id.slice(-4)})*\n`;
+            }
+        }
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🛡️ Last Month\'s Pardoned ☝️')
+            .addFields({
+                name: `👑 Royal Clemency (${pardonedUsers.length})`,
+                value: pardonedList || '• None',
+                inline: false
+            })
+            .setColor(0x00AA55);
+        
+        await replyTemporary(interaction, { embeds: [embed] });
+            
+    } catch (error) {
+        console.error('Error fetching pardoned users:', error);
+    }
+}
+
+async function handlePurgeListCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const allMembers = await interaction.guild.members.fetch();
+    let purgeList = '';
+    let purgeCount = 0;
+    
+    for (const [userId, member] of allMembers) {
+        if (member.user.bot || !hasLevel5Role(member)) continue;
+        
+        const monthlyData = await getUserMonthlyFeedback(userId);
+        const isPardoned = await isUserPardoned(userId);
+        const meetingRequirement = checkMonthlyRequirement(monthlyData);
+        
+        if (!meetingRequirement && !isPardoned) {
+            purgeCount++;
+            if (purgeList.length < 900) {
+                purgeList += `⚔️ **${member.displayName}** (${monthlyData.docs} docs, ${monthlyData.comments} comments)\n`;
+            }
+        }
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('🗡️ The Purge List ☝️')
+        .setDescription('Members who have failed to meet their sworn duties to the realm.')
+        .addFields(
+            { name: `💀 Marked for Exile (${purgeCount})`, value: purgeList || '• None face exile', inline: false },
             { 
-                name: '📝 Feedback Commands (Level 5+ Required)', 
-                value: '`/feedback` or `!feedback` - Log your most recent feedback message in this thread\n*Only works in #bookshelf-feedback and #bookshelf-discussion forums*\n`/feedback_status [user]` - Check contribution status', 
-                inline: false 
-            },
-            { 
-                name: '💰 Economy Commands', 
-                value: '`/balance [user]` - Check dinar balance and bookshelf status\n`/store` - View available items\n`/buy [item]` - Purchase items', 
-                inline: false 
-            },
-            { 
-                name: '👑 Staff Commands', 
-                value: '**Feedback Management:**\n`/feedback_add` - Add feedback points\n`/feedback_remove` - Remove feedback points\n`/feedback_reset` - Complete account reset\n\n**Dinar Management:**\n`/dinars_add` - Add dinars to user\n`/dinars_remove` - Remove dinars from user\n\n**Server Management:**\n`/stats` - View server statistics\n`/setup_bookshelf` - Configure bookshelf permissions', 
-                inline: false 
-            },
-            { 
-                name: '📋 How to Use', 
-                value: '1. **Post your feedback** in the allowed threads\n2. **Use `/feedback`** to log your most recent message\n3. **Earn dinars** and purchase bookshelf access\n4. **Post in bookshelf** forum with your credits', 
+                name: '⚔️ Requirements', 
+                value: `Choose one:\n🛡️ 2 document feedbacks\n⚔️ 6 comment feedbacks\n🗡️ 1 document + 3 comments`, 
                 inline: false 
             }
         )
-        .setColor(0x2F3136)
-        .setFooter({ text: 'Your humble servant in all matters literary and administrative' });
+        .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handleStatsCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const totalMembers = interaction.guild.memberCount;
+    const level5Members = interaction.guild.members.cache.filter(member => hasLevel5Role(member));
+    const totalLevel5 = level5Members.size;
+    
+    let monthlyContributors = 0;
+    
+    for (const [userId, member] of level5Members) {
+        const monthlyData = await getUserMonthlyFeedback(userId);
+        if (checkMonthlyRequirement(monthlyData)) {
+            monthlyContributors++;
+        }
+    }
+    
+    const contributionRate = totalLevel5 > 0 ? Math.round((monthlyContributors / totalLevel5) * 100) : 0;
+    
+    // Get economy stats
+    const economyStats = await global.db.db.get(`
+        SELECT 
+            SUM(current_credits) as total_credits,
+            SUM(chapter_leases) as total_leases,
+            COUNT(*) as tracked_users,
+            AVG(current_credits) as avg_credits
+        FROM users
+    `);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Type&Draft Community Statistics ☝️')
+        .addFields(
+            { name: 'Total Members', value: `${totalMembers}`, inline: true },
+            { name: 'Level 5+ Tracked', value: `${totalLevel5}`, inline: true },
+            { name: 'Meeting Monthly', value: `${monthlyContributors}`, inline: true },
+            { name: 'Participation Rate', value: `${contributionRate}%`, inline: true },
+            { name: 'Credits in Economy', value: `${economyStats?.total_credits || 0}`, inline: true },
+            { name: 'Chapter Leases', value: `${economyStats?.total_leases || 0}`, inline: true }
+        )
+        .setColor(contributionRate >= 70 ? 0x00AA55 : contributionRate >= 50 ? 0xFF9900 : 0xFF4444);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handlePardonCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const user = interaction.options.getUser('user');
+    
+    if (await isUserPardoned(user.id)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Already Pardoned ☝️')
+            .setColor(0xFF9900);
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    await pardonUser(user.id);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Pardon Granted ☝️')
+        .addFields({ name: 'Pardoned User', value: user.displayName, inline: true })
+        .setColor(0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function handlePostGuideCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    const type = interaction.options.getString('type');
+    
+    let embed;
+    const channels = getClickableChannelMentions(interaction.guild);
+    
+    if (type === 'navigation') {
+        embed = new EmbedBuilder()
+            .addFields(
+                {
+                    name: '🏛️ Welcome Halls',
+                    value: `${channels.reactionRoles} - Claim your roles with a simple reaction\n${channels.rulesChannel} - Our community covenant (read thoroughly)\n${channels.introductions} - Present yourself to our distinguished assembly\n${channels.bump} - Support our growth with \`/bump\``,
+                    inline: false
+                },
+                {
+                    name: '🏰 Courts',
+                    value: `${channels.ticket} - Private counsel with our esteemed staff\n${channels.botStuff} - I advise you to take advantage of the \`/help\` command, so you can learn more about the server's inner workings`,
+                    inline: false
+                },
+                {
+                    name: '🍺 The Tavern',
+                    value: '• Quarters for discussion concerning daily life, hobbies, and interests',
+                    inline: false
+                },
+                {
+                    name: '✍️ Scriptorium',
+                    value: `${channels.writingChat} - General discourse on the craft\n${channels.writingHelp} - Here, our community provides guidance in your literary questions\n${channels.onePageCritique} - Submit short excerpts for detailed feedback\n${channels.snippetShowcase} - Display your finest work for admiration`,
+                    inline: false
+                },
+                {
+                    name: '🎪 Circus',
+                    value: `${channels.triggered} - Use a popular pictogram to share your most controversial writing opinions\n${channels.bookshelfMemes} - Share humorous jests about the works of your fellow scribes`,
+                    inline: false
+                },
+                {
+                    name: '📚 The Citadel',
+                    value: `**Level 5** required: Access this domain by engaging with the community\n${channels.bookshelfFeedback} - Provide thorough, tactful critique using the \`/feedback\` command to earn credits\n${channels.bookshelf} - Post your chapters or short stories here after purchasing shelf access and leases. **See:** \`/store\`\n${channels.bookshelfDiscussion} - Scholarly discourse on critiques`,
+                    inline: false
+                },
+                {
+                    name: '📚 Maester Chambers',
+                    value: `${channels.readForReadFinder} - Full draft exchanges (**20+ feedback** required)\n${channels.completeDrafts} - Complete works forum (**Level 35 + 20 feedback** required)`,
+                    inline: false
+                },
+                {
+                    name: '💰 Our Credit Economy',
+                    value: `• **Two-tier system:** 1 credit (comments) or 3 credits (documents) per quality feedback (**Level 5+** only)\n• **Chapter multipliers:** Later chapters worth up to 1.75x more credits\n• **Quality ratings:** Community rates your feedback, affects future earnings\n• **Purchase** Bookshelf access (15 credits) + Chapter leases (3 credits each)\n• **Monthly requirement:** 2 docs OR 6 comments OR 1 doc + 3 comments`,
+                    inline: false
+                }
+            )
+            .setColor(0xFF8C00)
+            .setFooter({ text: 'Your humble servant in all literary endeavors' });
+    } else if (type === 'rules') {
+        embed = new EmbedBuilder()
+            .setTitle('The Laws of Type&Draft ☝️')
+            .addFields(
+                {
+                    name: '📜 The Third Law - Enhanced',
+                    value: `**Context is mandatory:** You MUST read all previous chapters before giving feedback. Document feedback requires complete story context. Comment feedback can be scene-specific. Monthly requirement: 2 doc feedbacks OR 6 comment feedbacks OR 1 doc + 3 comments.`,
+                    inline: false
+                },
+                {
+                    name: '📜 Content Limits',
+                    value: 'Bookshelf limit: 25,000 words maximum per user. Quality over quantity. Focus on meaningful, thoughtful critique rather than rushed feedback.',
+                    inline: false
+                }
+            )
+            .setColor(0xFF8C00);
+    } else if (type === 'feedback') {
+        embed = new EmbedBuilder()
+            .setTitle('Feedback System Quick Reference ☝️')
+            .addFields(
+                {
+                    name: '💬 Comment Feedback (1 credit)',
+                    value: 'Inline comments within Google Docs. Still requires reading previous chapters.',
+                    inline: false
+                },
+                {
+                    name: '📄 Document Feedback (3 credit)', 
+                    value: 'Comprehensive feedback in separate document. Also requires reading all previous chapters.',
+                    inline: false
+                },
+                {
+                    name: '📈 Multipliers',
+                    value: '**Chapter:** 1.0x (Ch 1-2) → 1.75x (Ch 11+)\n**Quality:** Community rates 1-4 stars, affects future earnings',
+                    inline: false
+                }
+            )
+            .setColor(0xFF8C00);
+    }
+    
+    await interaction.channel.send({ embeds: [embed] });
+    
+    const confirmEmbed = new EmbedBuilder()
+        .setTitle('Guide Posted ☝️')
+        .setColor(0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [confirmEmbed] });
+}
+
+async function handlePostRulesCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    await postRules(interaction.channel);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('📜 Rules Posted ☝️')
+        .setDescription('The laws of our realm have been proclaimed in this chamber.')
+        .setColor(0x00AA55);
+    
+    await replyTemporary(interaction, { embeds: [embed] });
+}
+
+async function postRules(channel) {
+    const guild = channel.guild;
+    const channels = getClickableChannelMentions(guild);
+
+    const embed = new EmbedBuilder()
+        .setTitle('📜 The Laws of Type&Draft ☝️')
+        .addFields(
+            {
+                name: '⚔️ The First Law',
+                value: 'All discourse shall be respectful and courteous. Discrimination of any form is strictly forbidden in our halls.',
+                inline: false
+            },
+            {
+                name: '🛡️ The Second Law', 
+                value: 'Honor each channel\'s designated purpose. Writing matters belong in writing quarters, and likewise for all other subjects.',
+                inline: false
+            },
+            {
+                name: '🏰 The Third Law - Enhanced Feedback System',
+                value: `Upon earning access to our ${channels.bookshelf} forum, you may post chapters using chapter leases. **Context is mandatory:** You MUST read all previous chapters before giving feedback. Document feedback requires complete story context. **Monthly requirement:** 2 document feedbacks OR 6 comment feedbacks OR 1 document + 3 comments. New members must reach **Level 5** within a month. This ensures all members contribute meaningfully to our literary community.`,
+                inline: false
+            },
+            {
+                name: '👑 The Fourth Law',
+                value: `AI-generated artwork belongs solely in ${channels.aiArt}. AI-written work created from scratch is forbidden. Using AI as a writing tool is acceptable. Violations will be swiftly deleted.`,
+                inline: false
+            },
+            {
+                name: '🗡️ The Fifth Law',
+                value: 'Direct messages require explicit permission. Promotional spam results in immediate banishment. Introduction requirement: State your lucky number and favorite animal to prove rule comprehension.',
+                inline: false
+            },
+            {
+                name: '🏰 The Sixth Law',
+                value: '**18+ members only.** Suspected minors must provide age verification (selfie + passport). Failure results in removal. No exceptions, even for tomorrow\'s birthdays.',
+                inline: false
+            },
+            {
+                name: '⚔️ The Seventh Law',
+                value: 'NSFW content is permitted within designated spaces. Pornography (content intended for sexual arousal) is strictly prohibited.',
+                inline: false
+            },
+            {
+                name: '🛡️ The Eighth Law',
+                value: 'Camaraderie and jest are welcomed, but respect all boundaries. Exercise common sense in all interactions.',
+                inline: false
+            },
+            {
+                name: '👑 The Final Law',
+                value: 'Arrogance has no place here. If you seek feedback, acknowledge you have room for growth. Dismissive attitudes toward our members result in immediate expulsion.',
+                inline: false
+            }
+        )
+        .setColor(0xFF8C00)
+        .setFooter({ text: 'Compliance ensures our community\'s continued prosperity • Bookshelf limit: 25,000 words per user' });
+
+    await channel.send({ embeds: [embed] });
 }
 
 // ===== ERROR HANDLERS =====
-async function handleCommandError(message, command, error) {
-    const errorEmbed = new EmbedBuilder()
-        .setTitle('An Unforeseen Complication')
-        .setDescription('I regret that an unforeseen complication has arisen while processing your request. The error details have been logged.')
-        .addFields({
-            name: 'Command',
-            value: `\`!${command}\``,
-            inline: true
-        }, {
-            name: 'Error',
-            value: `\`\`\`${error.message}\`\`\``,
-            inline: false
-        })
-        .setColor(0xFF6B6B);
-    
-    try {
-        await replyTemporaryMessage(message, { embeds: [errorEmbed] });
-    } catch (replyError) {
-        console.error('Failed to send error message:', replyError);
-    }
-}
-
 async function handleInteractionError(interaction, error) {
     const errorEmbed = new EmbedBuilder()
-        .setTitle('An Unforeseen Complication')
-        .setDescription('I regret that an unforeseen complication has arisen while processing your request. Perhaps you might try again, or seek assistance from our esteemed staff?')
+        .setTitle('System Error ☝️')
+        .setDescription('An unexpected complication arose. Please try again or contact staff.')
         .setColor(0xFF6B6B);
     
     try {
@@ -1547,16 +2350,30 @@ async function handleInteractionError(interaction, error) {
 
 async function sendStaffOnlyMessage(target, isInteraction = false) {
     const embed = new EmbedBuilder()
-        .setTitle('Insufficient Authority')
-        .setDescription('I fear you lack the necessary authority to conduct such administrative actions, my lord.')
+        .setTitle('Insufficient Authority ☝️')
         .setColor(0xFF6B6B);
     
     if (isInteraction) {
         return await replyTemporary(target, { embeds: [embed], ephemeral: true });
-    } else {
-        return await replyTemporaryMessage(target, { embeds: [embed] });
     }
 }
 
 // ===== BOT LOGIN =====
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login(process.env.DISCORD_BOT2_TOKEN);
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('🛑 Shutting down gracefully...');
+    if (global.db) {
+        await global.db.close();
+    }
+    process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+    console.log('🛑 Shutting down gracefully...');
+    if (global.db) {
+        await global.db.close();
+    }
+    process.exit(0);
+});
