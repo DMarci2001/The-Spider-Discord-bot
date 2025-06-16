@@ -1,21 +1,21 @@
 const sqlite3 = require('sqlite3').verbose();
-const { open } = require('sqlite');
+const path = require('path');
 
 class DatabaseManager {
-    constructor() {
+    constructor(dbPath = './typeAndDraft.db') {
+        this.dbPath = dbPath;
         this.db = null;
     }
 
     async initialize() {
         try {
-            this.db = await open({
-                filename: './bot_database.db',
-                driver: sqlite3.Database
-            });
-
-            await this.db.exec('PRAGMA foreign_keys = ON');
+            this.db = new sqlite3.Database(this.dbPath);
+            console.log('📊 Database connection established');
+            
             await this.createTables();
-            console.log('✅ Enhanced database initialized successfully');
+            await this.runMigrations();
+            
+            console.log('✅ Database initialized successfully');
             return true;
         } catch (error) {
             console.error('❌ Database initialization failed:', error);
@@ -24,442 +24,477 @@ class DatabaseManager {
     }
 
     async createTables() {
-        // Enhanced users table with quality ratings
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS users (
+        const tables = [
+            // Users table - main user data
+            `CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
-                total_feedback_all_time INTEGER DEFAULT 0,
                 current_credits INTEGER DEFAULT 0,
+                total_feedback_all_time INTEGER DEFAULT 0,
                 chapter_leases INTEGER DEFAULT 0,
                 bookshelf_posts INTEGER DEFAULT 0,
-                quality_ratings TEXT DEFAULT '{"total": 0, "sum": 0, "average": 2.0}',
-                last_active INTEGER DEFAULT 0,
-                join_date INTEGER DEFAULT 0,
-                created_at INTEGER DEFAULT (strftime('%s', 'now'))
-            )
-        `);
+                demo_posts INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )`,
 
-        // Enhanced monthly feedback with separate tracking
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS monthly_feedback (
-                user_id TEXT,
-                month_key TEXT,
-                doc_feedback_count INTEGER DEFAULT 0,
-                comment_feedback_count INTEGER DEFAULT 0,
-                PRIMARY KEY (user_id, month_key),
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-            )
-        `);
+            // Validated feedback - new system
+            `CREATE TABLE IF NOT EXISTS validated_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                feedback_type TEXT NOT NULL CHECK (feedback_type IN ('doc', 'comment')),
+                validator_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                validated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )`,
 
-        // Enhanced logged feedback with more details
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS logged_feedback (
+            // Pending feedback - awaiting validation
+            `CREATE TABLE IF NOT EXISTS pending_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                feedback_type TEXT NOT NULL CHECK (feedback_type IN ('doc', 'comment')),
                 message_id TEXT,
-                user_id TEXT,
-                feedback_type TEXT,
-                chapter_number INTEGER,
-                credits_earned INTEGER,
-                logged_at INTEGER DEFAULT (strftime('%s', 'now')),
-                PRIMARY KEY (message_id, user_id),
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-            )
-        `);
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, thread_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )`,
 
-        // Quality ratings system
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS quality_ratings (
+            // Monthly feedback tracking
+            `CREATE TABLE IF NOT EXISTS monthly_feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rated_user_id TEXT,
-                rater_id TEXT,
-                rating INTEGER CHECK (rating >= 1 AND rating <= 4),
-                feedback_message_id TEXT,
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                FOREIGN KEY (rated_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-                FOREIGN KEY (rater_id) REFERENCES users(user_id) ON DELETE CASCADE,
-                UNIQUE(rated_user_id, rater_id, feedback_message_id)
-            )
-        `);
+                user_id TEXT NOT NULL,
+                month_key TEXT NOT NULL,
+                docs INTEGER DEFAULT 0,
+                comments INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, month_key),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )`,
 
-        // User purchases
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS user_purchases (
-                user_id TEXT,
-                item TEXT,
-                purchased_at INTEGER DEFAULT (strftime('%s', 'now')),
-                PRIMARY KEY (user_id, item),
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-            )
-        `);
+            // User purchases
+            `CREATE TABLE IF NOT EXISTS user_purchases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                item TEXT NOT NULL,
+                purchased_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )`,
 
-        // Pardons system
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS pardons (
-                user_id TEXT,
-                month_key TEXT,
+            // Pardons system
+            `CREATE TABLE IF NOT EXISTS pardons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                month_key TEXT NOT NULL,
                 reason TEXT DEFAULT 'staff_discretion',
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                PRIMARY KEY (user_id, month_key),
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-            )
-        `);
+                pardoned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, month_key),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )`,
 
-        // Work of the week nominations
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS work_spotlights (
+            // Faceless command cooldowns
+            `CREATE TABLE IF NOT EXISTS faceless_cooldowns (
+                user_id TEXT PRIMARY KEY,
+                last_used INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )`,
+
+            // Citadel channels
+            `CREATE TABLE IF NOT EXISTS citadel_channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nominator_id TEXT,
-                thread_id TEXT,
-                thread_name TEXT,
-                author_id TEXT,
-                week_key TEXT,
-                votes INTEGER DEFAULT 0,
-                created_at INTEGER DEFAULT (strftime('%s', 'now')),
-                FOREIGN KEY (nominator_id) REFERENCES users(user_id) ON DELETE CASCADE,
-                FOREIGN KEY (author_id) REFERENCES users(user_id) ON DELETE CASCADE
-            )
-        `);
+                user_id TEXT UNIQUE NOT NULL,
+                channel_id TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )`
+        ];
 
-        // Cooldowns for faceless and shame commands
-        await this.db.exec(`
-            CREATE TABLE IF NOT EXISTS user_cooldowns (
-                user_id TEXT,
-                command_type TEXT,
-                last_used INTEGER,
-                PRIMARY KEY (user_id, command_type),
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-            )
-        `);
+        for (const table of tables) {
+            await this.runQuery(table);
+        }
 
-        console.log('📋 All database tables created/verified');
-    }
+        // Create indexes for better performance
+        const indexes = [
+            'CREATE INDEX IF NOT EXISTS idx_validated_feedback_user_id ON validated_feedback(user_id)',
+            'CREATE INDEX IF NOT EXISTS idx_validated_feedback_type ON validated_feedback(feedback_type)',
+            'CREATE INDEX IF NOT EXISTS idx_monthly_feedback_user_month ON monthly_feedback(user_id, month_key)',
+            'CREATE INDEX IF NOT EXISTS idx_pending_feedback_user_thread ON pending_feedback(user_id, thread_id)',
+            'CREATE INDEX IF NOT EXISTS idx_pardons_user_month ON pardons(user_id, month_key)'
+        ];
 
-    async testConnection() {
-        try {
-            const result = await this.db.get('SELECT 1 as test');
-            return result && result.test === 1;
-        } catch (error) {
-            console.error('Database connection test failed:', error);
-            return false;
+        for (const index of indexes) {
+            await this.runQuery(index);
         }
     }
 
-    // ===== MONTHLY FEEDBACK METHODS =====
-    async getMonthlyFeedback(userId, monthKey) {
+    async runMigrations() {
+        // Add any necessary migrations here
         try {
-            const result = await this.db.get(
-                'SELECT doc_feedback_count, comment_feedback_count FROM monthly_feedback WHERE user_id = ? AND month_key = ?',
-                [userId, monthKey]
-            );
+            // Check if demo_posts column exists, add if not
+            const tableInfo = await this.runQuery("PRAGMA table_info(users)");
+            const hasDemoPosts = tableInfo.some(column => column.name === 'demo_posts');
             
-            if (!result) {
-                return { docs: 0, comments: 0 };
-            }
-            
-            return {
-                docs: result.doc_feedback_count || 0,
-                comments: result.comment_feedback_count || 0
-            };
-        } catch (error) {
-            console.error('Error getting monthly feedback:', error);
-            return { docs: 0, comments: 0 };
-        }
-    }
-
-    async setMonthlyFeedback(userId, monthKey, feedbackType, count) {
-        try {
-            const field = feedbackType === 'document' ? 'doc_feedback_count' : 'comment_feedback_count';
-            
-            const existing = await this.db.get(
-                'SELECT * FROM monthly_feedback WHERE user_id = ? AND month_key = ?',
-                [userId, monthKey]
-            );
-            
-            if (existing) {
-                await this.db.run(
-                    `UPDATE monthly_feedback SET ${field} = ? WHERE user_id = ? AND month_key = ?`,
-                    [count, userId, monthKey]
-                );
-            } else {
-                const docCount = feedbackType === 'document' ? count : 0;
-                const commentCount = feedbackType === 'comment' ? count : 0;
-                
-                await this.db.run(
-                    'INSERT INTO monthly_feedback (user_id, month_key, doc_feedback_count, comment_feedback_count) VALUES (?, ?, ?, ?)',
-                    [userId, monthKey, docCount, commentCount]
-                );
+            if (!hasDemoPosts) {
+                await this.runQuery('ALTER TABLE users ADD COLUMN demo_posts INTEGER DEFAULT 0');
+                console.log('✅ Added demo_posts column to users table');
             }
         } catch (error) {
-            console.error('Error setting monthly feedback:', error);
+            console.log('Migration completed or not needed:', error.message);
         }
     }
 
-    // ===== PARDON SYSTEM METHODS =====
-    async isUserPardoned(userId, monthKey) {
-        try {
-            const result = await this.db.get(
-                'SELECT 1 FROM pardons WHERE user_id = ? AND month_key = ?',
-                [userId, monthKey]
+    // Helper method to run queries
+    runQuery(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.all(sql, params, (err, rows) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(rows);
+                }
+            });
+        });
+    }
+
+    // Helper method to run single operations
+    runSingle(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.run(sql, params, function(err) {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve({ lastID: this.lastID, changes: this.changes });
+                }
+            });
+        });
+    }
+
+    // Helper method to get single row
+    getRow(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.get(sql, params, (err, row) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(row);
+                }
+            });
+        });
+    }
+
+    // ===== USER MANAGEMENT =====
+    async getUserData(userId) {
+        let user = await this.getRow('SELECT * FROM users WHERE user_id = ?', [userId]);
+        
+        if (!user) {
+            await this.runSingle(
+                'INSERT INTO users (user_id, current_credits, total_feedback_all_time, chapter_leases, bookshelf_posts, demo_posts) VALUES (?, 0, 0, 0, 0, 0)',
+                [userId]
             );
-            return !!result;
-        } catch (error) {
-            console.error('Error checking pardon status:', error);
-            return false;
+            user = await this.getRow('SELECT * FROM users WHERE user_id = ?', [userId]);
         }
+        
+        return user;
     }
 
-    async pardonUser(userId, monthKey, reason = 'staff_discretion') {
-        try {
-            await this.db.run(
-                'INSERT OR REPLACE INTO pardons (user_id, month_key, reason) VALUES (?, ?, ?)',
-                [userId, monthKey, reason]
-            );
-        } catch (error) {
-            console.error('Error pardoning user:', error);
-            throw error;
-        }
-    }
+    async updateUserData(userId, updates) {
+        const validFields = ['current_credits', 'total_feedback_all_time', 'chapter_leases', 'bookshelf_posts', 'demo_posts'];
+        const setClause = [];
+        const values = [];
 
-    async removePardon(userId, monthKey) {
-        try {
-            const result = await this.db.run(
-                'DELETE FROM pardons WHERE user_id = ? AND month_key = ?',
-                [userId, monthKey]
-            );
-            return result.changes > 0;
-        } catch (error) {
-            console.error('Error removing pardon:', error);
-            return false;
+        for (const [field, value] of Object.entries(updates)) {
+            if (validFields.includes(field)) {
+                setClause.push(`${field} = ?`);
+                values.push(value);
+            }
         }
-    }
 
-    async getUserPardonReason(userId, monthKey) {
-        try {
-            const result = await this.db.get(
-                'SELECT reason FROM pardons WHERE user_id = ? AND month_key = ?',
-                [userId, monthKey]
-            );
-            return result ? result.reason : null;
-        } catch (error) {
-            console.error('Error getting pardon reason:', error);
-            return null;
-        }
-    }
+        if (setClause.length === 0) return;
 
-    async getPardonedUsersForMonth(monthKey) {
-        try {
-            return await this.db.all(
-                'SELECT user_id, reason FROM pardons WHERE month_key = ?',
-                [monthKey]
-            );
-        } catch (error) {
-            console.error('Error getting pardoned users:', error);
-            return [];
-        }
-    }
-
-    // ===== LEADERBOARD METHODS =====
-    async getTopContributors(limit = 10) {
-        try {
-            return await this.db.all(
-                'SELECT user_id, total_feedback_all_time FROM users WHERE total_feedback_all_time > 0 ORDER BY total_feedback_all_time DESC LIMIT ?',
-                [limit]
-            );
-        } catch (error) {
-            console.error('Error getting top contributors:', error);
-            return [];
-        }
-    }
-
-    async getMonthlyLeaderboard(monthKey, limit = 10) {
-        try {
-            return await this.db.all(`
-                SELECT 
-                    user_id, 
-                    (doc_feedback_count * 3 + comment_feedback_count) as weighted_score,
-                    doc_feedback_count,
-                    comment_feedback_count
-                FROM monthly_feedback 
-                WHERE month_key = ? AND weighted_score > 0
-                ORDER BY weighted_score DESC 
-                LIMIT ?
-            `, [monthKey, limit]);
-        } catch (error) {
-            console.error('Error getting monthly leaderboard:', error);
-            return [];
-        }
-    }
-
-    async getQualityLeaderboard(limit = 10) {
-        try {
-            return await this.db.all(`
-                SELECT 
-                    u.user_id, 
-                    u.total_feedback_all_time,
-                    json_extract(u.quality_ratings, '$.average') as avg_quality,
-                    json_extract(u.quality_ratings, '$.total') as total_ratings
-                FROM users u
-                WHERE u.total_feedback_all_time > 0 
-                AND json_extract(u.quality_ratings, '$.total') >= 3
-                ORDER BY json_extract(u.quality_ratings, '$.average') DESC
-                LIMIT ?
-            `, [limit]);
-        } catch (error) {
-            console.error('Error getting quality leaderboard:', error);
-            return [];
-        }
-    }
-
-    // ===== COOLDOWN METHODS =====
-    async getFacelessCooldown(userId) {
-        try {
-            const result = await this.db.get(
-                'SELECT last_used FROM user_cooldowns WHERE user_id = ? AND command_type = ?',
-                [userId, 'faceless']
-            );
-            return result ? result.last_used : 0;
-        } catch (error) {
-            console.error('Error getting faceless cooldown:', error);
-            return 0;
-        }
-    }
-
-    async setFacelessCooldown(userId) {
-        try {
-            await this.db.run(
-                'INSERT OR REPLACE INTO user_cooldowns (user_id, command_type, last_used) VALUES (?, ?, ?)',
-                [userId, 'faceless', Date.now()]
-            );
-        } catch (error) {
-            console.error('Error setting faceless cooldown:', error);
-        }
-    }
-
-    async getShameCooldown(userId) {
-        try {
-            const result = await this.db.get(
-                'SELECT last_used FROM user_cooldowns WHERE user_id = ? AND command_type = ?',
-                [userId, 'shame']
-            );
-            return result ? result.last_used : 0;
-        } catch (error) {
-            console.error('Error getting shame cooldown:', error);
-            return 0;
-        }
-    }
-
-    async setShameCooldown(userId) {
-        try {
-            await this.db.run(
-                'INSERT OR REPLACE INTO user_cooldowns (user_id, command_type, last_used) VALUES (?, ?, ?)',
-                [userId, 'shame', Date.now()]
-            );
-        } catch (error) {
-            console.error('Error setting shame cooldown:', error);
-        }
-    }
-
-    async cleanupOldCooldowns() {
-        try {
-            const oneHour = 60 * 60 * 1000;
-            const cutoff = Date.now() - oneHour;
-            
-            await this.db.run(
-                'DELETE FROM user_cooldowns WHERE last_used < ?',
-                [cutoff]
-            );
-        } catch (error) {
-            console.error('Error cleaning up old cooldowns:', error);
-        }
-    }
-
-    async cleanupOldShameCooldowns() {
-        try {
-            const oneHour = 60 * 60 * 1000;
-            const cutoff = Date.now() - oneHour;
-            
-            await this.db.run(
-                'DELETE FROM user_cooldowns WHERE command_type = ? AND last_used < ?',
-                ['shame', cutoff]
-            );
-        } catch (error) {
-            console.error('Error cleaning up old shame cooldowns:', error);
-        }
-    }
-
-    // ===== UTILITY METHODS =====
-    async clearUserLoggedFeedback(userId) {
-        try {
-            await this.db.run('DELETE FROM logged_feedback WHERE user_id = ?', [userId]);
-        } catch (error) {
-            console.error('Error clearing user logged feedback:', error);
-        }
+        values.push(userId);
+        const sql = `UPDATE users SET ${setClause.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`;
+        
+        await this.runSingle(sql, values);
     }
 
     async deleteUser(userId) {
-        try {
-            // CASCADE will handle related data
-            await this.db.run('DELETE FROM users WHERE user_id = ?', [userId]);
-        } catch (error) {
-            console.error('Error deleting user:', error);
-        }
+        await this.runSingle('DELETE FROM validated_feedback WHERE user_id = ?', [userId]);
+        await this.runSingle('DELETE FROM pending_feedback WHERE user_id = ?', [userId]);
+        await this.runSingle('DELETE FROM monthly_feedback WHERE user_id = ?', [userId]);
+        await this.runSingle('DELETE FROM user_purchases WHERE user_id = ?', [userId]);
+        await this.runSingle('DELETE FROM faceless_cooldowns WHERE user_id = ?', [userId]);
+        await this.runSingle('DELETE FROM citadel_channels WHERE user_id = ?', [userId]);
+        await this.runSingle('DELETE FROM users WHERE user_id = ?', [userId]);
     }
 
-    async addPurchase(userId, item) {
-        try {
-            await this.db.run(
-                'INSERT OR REPLACE INTO user_purchases (user_id, item) VALUES (?, ?)',
-                [userId, item]
-            );
-        } catch (error) {
-            console.error('Error adding purchase:', error);
-        }
+    // ===== VALIDATED FEEDBACK SYSTEM =====
+    async addValidatedFeedback(userId, feedbackType, validatorId, threadId) {
+        await this.runSingle(
+            'INSERT INTO validated_feedback (user_id, feedback_type, validator_id, thread_id) VALUES (?, ?, ?, ?)',
+            [userId, feedbackType, validatorId, threadId]
+        );
+
+        // Update total feedback count
+        const userData = await this.getUserData(userId);
+        await this.updateUserData(userId, {
+            total_feedback_all_time: userData.total_feedback_all_time + 1
+        });
+
+        // Update monthly feedback count
+        await this.updateMonthlyFeedbackCount(userId, feedbackType);
     }
 
-    // ===== ANALYTICS METHODS =====
-    async getServerStats() {
-        try {
-            const stats = await this.db.get(`
-                SELECT 
-                    COUNT(*) as total_users,
-                    SUM(total_feedback_all_time) as total_feedback,
-                    SUM(current_credits) as total_credits,
-                    SUM(chapter_leases) as total_leases,
-                    AVG(total_feedback_all_time) as avg_feedback_per_user,
-                    AVG(current_credits) as avg_credits_per_user
-                FROM users
-            `);
-
-            const activeThisMonth = await this.db.get(`
-                SELECT COUNT(DISTINCT user_id) as active_users
-                FROM monthly_feedback 
-                WHERE month_key = ?
-            `, [this.getCurrentMonthKey()]);
-
-            return {
-                ...stats,
-                active_this_month: activeThisMonth.active_users || 0
-            };
-        } catch (error) {
-            console.error('Error getting server stats:', error);
-            return {};
-        }
+    async getUserValidatedFeedbacks(userId) {
+        const result = await this.getRow(
+            'SELECT COUNT(*) as count FROM validated_feedback WHERE user_id = ?',
+            [userId]
+        );
+        return result ? result.count : 0;
     }
 
+    async getUserValidatedFeedbacksByType(userId) {
+        const docs = await this.getRow(
+            'SELECT COUNT(*) as count FROM validated_feedback WHERE user_id = ? AND feedback_type = "doc"',
+            [userId]
+        );
+        const comments = await this.getRow(
+            'SELECT COUNT(*) as count FROM validated_feedback WHERE user_id = ? AND feedback_type = "comment"',
+            [userId]
+        );
+
+        return {
+            docs: docs ? docs.count : 0,
+            comments: comments ? comments.count : 0
+        };
+    }
+
+    // ===== PENDING FEEDBACK SYSTEM =====
+    async addPendingFeedback(userId, threadId, feedbackType, messageId) {
+        await this.runSingle(
+            'INSERT OR REPLACE INTO pending_feedback (user_id, thread_id, feedback_type, message_id) VALUES (?, ?, ?, ?)',
+            [userId, threadId, feedbackType, messageId]
+        );
+    }
+
+    async getPendingFeedback(userId, threadId) {
+        return await this.getRow(
+            'SELECT * FROM pending_feedback WHERE user_id = ? AND thread_id = ?',
+            [userId, threadId]
+        );
+    }
+
+    async removePendingFeedback(userId, threadId) {
+        await this.runSingle(
+            'DELETE FROM pending_feedback WHERE user_id = ? AND thread_id = ?',
+            [userId, threadId]
+        );
+    }
+
+    // ===== MONTHLY FEEDBACK TRACKING =====
     getCurrentMonthKey() {
         const now = new Date();
         const adjustedDate = new Date(now.getTime() - (24 * 60 * 60 * 1000));
         return `${adjustedDate.getFullYear()}-${adjustedDate.getMonth()}`;
     }
 
+    async updateMonthlyFeedbackCount(userId, feedbackType) {
+        const monthKey = this.getCurrentMonthKey();
+        
+        // Get or create monthly record
+        let monthlyRecord = await this.getRow(
+            'SELECT * FROM monthly_feedback WHERE user_id = ? AND month_key = ?',
+            [userId, monthKey]
+        );
+
+        if (!monthlyRecord) {
+            await this.runSingle(
+                'INSERT INTO monthly_feedback (user_id, month_key, docs, comments) VALUES (?, ?, 0, 0)',
+                [userId, monthKey]
+            );
+            monthlyRecord = { docs: 0, comments: 0 };
+        }
+
+        // Update the appropriate count
+        const newDocs = feedbackType === 'doc' ? monthlyRecord.docs + 1 : monthlyRecord.docs;
+        const newComments = feedbackType === 'comment' ? monthlyRecord.comments + 1 : monthlyRecord.comments;
+
+        await this.runSingle(
+            'UPDATE monthly_feedback SET docs = ?, comments = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND month_key = ?',
+            [newDocs, newComments, userId, monthKey]
+        );
+    }
+
+    async getUserMonthlyFeedbackByType(userId) {
+        const monthKey = this.getCurrentMonthKey();
+        const result = await this.getRow(
+            'SELECT docs, comments FROM monthly_feedback WHERE user_id = ? AND month_key = ?',
+            [userId, monthKey]
+        );
+
+        return result ? { docs: result.docs, comments: result.comments } : { docs: 0, comments: 0 };
+    }
+
+    async setUserMonthlyFeedback(userId, monthKey, count) {
+        await this.runSingle(
+            'INSERT OR REPLACE INTO monthly_feedback (user_id, month_key, docs, comments) VALUES (?, ?, ?, 0)',
+            [userId, monthKey, count]
+        );
+    }
+
+    // ===== CREDITS AND LEASES =====
+    async addCredits(userId, amount) {
+        const userData = await this.getUserData(userId);
+        await this.updateUserData(userId, {
+            current_credits: userData.current_credits + amount
+        });
+    }
+
+    async addLeases(userId, amount) {
+        const userData = await this.getUserData(userId);
+        await this.updateUserData(userId, {
+            chapter_leases: userData.chapter_leases + amount
+        });
+    }
+
+    async incrementBookshelfDemoPostCount(userId) {
+        const userData = await this.getUserData(userId);
+        await this.updateUserData(userId, {
+            demo_posts: (userData.demo_posts || 0) + 1
+        });
+    }
+
+    // ===== PURCHASES =====
+    async addPurchase(userId, item) {
+        await this.runSingle(
+            'INSERT INTO user_purchases (user_id, item) VALUES (?, ?)',
+            [userId, item]
+        );
+    }
+
+    // ===== PARDONS SYSTEM =====
+    async pardonUser(userId, monthKey, reason = 'staff_discretion') {
+        await this.runSingle(
+            'INSERT OR REPLACE INTO pardons (user_id, month_key, reason) VALUES (?, ?, ?)',
+            [userId, monthKey, reason]
+        );
+    }
+
+    async isUserPardoned(userId, monthKey) {
+        const result = await this.getRow(
+            'SELECT id FROM pardons WHERE user_id = ? AND month_key = ?',
+            [userId, monthKey]
+        );
+        return !!result;
+    }
+
+    async removePardon(userId, monthKey) {
+        const result = await this.runSingle(
+            'DELETE FROM pardons WHERE user_id = ? AND month_key = ?',
+            [userId, monthKey]
+        );
+        return result.changes > 0;
+    }
+
+    async getPardonedUsersForMonth(monthKey) {
+        return await this.runQuery(
+            'SELECT user_id, reason FROM pardons WHERE month_key = ?',
+            [monthKey]
+        );
+    }
+
+    // ===== FACELESS COOLDOWNS =====
+    async getFacelessCooldown(userId) {
+        const result = await this.getRow(
+            'SELECT last_used FROM faceless_cooldowns WHERE user_id = ?',
+            [userId]
+        );
+        return result ? result.last_used : 0;
+    }
+
+    async setFacelessCooldown(userId) {
+        const now = Date.now();
+        await this.runSingle(
+            'INSERT OR REPLACE INTO faceless_cooldowns (user_id, last_used) VALUES (?, ?)',
+            [userId, now]
+        );
+    }
+
+    // ===== CITADEL CHANNELS =====
+    async createCitadelChannel(userId, channelId) {
+        await this.runSingle(
+            'INSERT INTO citadel_channels (user_id, channel_id) VALUES (?, ?)',
+            [userId, channelId]
+        );
+    }
+
+    async getUserCitadelChannel(userId) {
+        const result = await this.getRow(
+            'SELECT channel_id FROM citadel_channels WHERE user_id = ?',
+            [userId]
+        );
+        return result ? result.channel_id : null;
+    }
+
+    // ===== STATISTICS =====
+    async getTopContributors(limit = 10) {
+        return await this.runQuery(
+            'SELECT user_id, total_feedback_all_time FROM users WHERE total_feedback_all_time > 0 ORDER BY total_feedback_all_time DESC LIMIT ?',
+            [limit]
+        );
+    }
+
+    // ===== CLEANUP FUNCTIONS =====
+    async clearUserLoggedFeedback(userId) {
+        await this.runSingle('DELETE FROM validated_feedback WHERE user_id = ?', [userId]);
+        await this.runSingle('DELETE FROM pending_feedback WHERE user_id = ?', [userId]);
+        await this.runSingle('DELETE FROM monthly_feedback WHERE user_id = ?', [userId]);
+    }
+
+    // ===== CONNECTION MANAGEMENT =====
+    async testConnection() {
+        try {
+            await this.runQuery('SELECT 1');
+            return true;
+        } catch (error) {
+            console.error('Database connection test failed:', error);
+            return false;
+        }
+    }
+
     async close() {
         if (this.db) {
-            try {
-                await this.db.close();
-                console.log('✅ Database connection closed');
-            } catch (error) {
-                console.error('❌ Error closing database:', error);
-            }
+            return new Promise((resolve) => {
+                this.db.close((err) => {
+                    if (err) {
+                        console.error('Error closing database:', err);
+                    } else {
+                        console.log('📊 Database connection closed');
+                    }
+                    resolve();
+                });
+            });
         }
+    }
+
+    // ===== BACKUP AND MAINTENANCE =====
+    async vacuum() {
+        await this.runQuery('VACUUM');
+        console.log('🧹 Database optimized');
+    }
+
+    async getStats() {
+        const totalUsers = await this.getRow('SELECT COUNT(*) as count FROM users');
+        const totalValidatedFeedback = await this.getRow('SELECT COUNT(*) as count FROM validated_feedback');
+        const totalPendingFeedback = await this.getRow('SELECT COUNT(*) as count FROM pending_feedback');
+        const totalCitadelChannels = await this.getRow('SELECT COUNT(*) as count FROM citadel_channels');
+
+        return {
+            totalUsers: totalUsers.count,
+            totalValidatedFeedback: totalValidatedFeedback.count,
+            totalPendingFeedback: totalPendingFeedback.count,
+            totalCitadelChannels: totalCitadelChannels.count
+        };
     }
 }
 
