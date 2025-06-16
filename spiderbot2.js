@@ -503,14 +503,6 @@ function checkMonthlyRequirementMet(docs, comments) {
     return false;
 }
 
-async function incrementBookshelfDemoPostCount(userId) {
-    try {
-        await global.db.incrementBookshelfDemoPostCount(userId);
-    } catch (error) {
-        console.error('Error incrementing demo post count:', error);
-    }
-}
-
 async function createCitadelChannel(guild, userId, member) {
     try {
         // Find Citadel category
@@ -762,61 +754,114 @@ function isInAllowedFeedbackThread(channel) {
         return true;
     }
     
-    // RULE 2: Enhanced Citadel detection - Allow threads in Citadel channels
-    if (channel.isThread() && channel.parent) {
-        // Check if the thread's parent channel is in a Citadel category
-        const citadelCategory = channel.guild.channels.cache.find(ch => 
-            ch.type === 4 && ch.name.toLowerCase().includes('citadel')
-        );
+    // RULE 2: Allow threads in text channels that are inside a Citadel category
+    if (channel.isThread() && channel.parent && channel.parent.type === 0) {
+        // Helper function to normalize Unicode text to ASCII
+        function normalizeText(text) {
+            return text
+                .normalize('NFD') // Decompose Unicode
+                .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+                .replace(/[^\w\s]/g, '') // Remove special characters
+                .toLowerCase()
+                .trim();
+        }
         
-        if (citadelCategory) {
-            console.log(`   Found Citadel category: ${citadelCategory.name} (ID: ${citadelCategory.id})`);
-            console.log(`   Parent channel parentId: ${channel.parent.parentId}`);
+        // Find categories that contain "citadel" in normalized form
+        const citadelCategories = channel.guild.channels.cache.filter(ch => {
+            if (ch.type !== 4) return false; // Must be category
             
-            // Check if the thread's parent channel is in the Citadel category
-            if (channel.parent.parentId === citadelCategory.id) {
-                console.log(`✅ Thread in Citadel channel (${channel.parent.name}) is allowed`);
+            const normalizedName = normalizeText(ch.name);
+            return normalizedName.includes('citadel') || 
+                   normalizedName.includes('the citadel') ||
+                   ch.name.toLowerCase().includes('citadel') ||
+                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') || // Unicode bold
+                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') || // Unicode script
+                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');   // Unicode fraktur
+        });
+        
+        console.log(`   Found ${citadelCategories.size} potential Citadel categories:`);
+        citadelCategories.forEach(cat => {
+            console.log(`     - ${cat.name} (ID: ${cat.id})`);
+        });
+        
+        // Check if the thread's parent channel is in any Citadel category
+        for (const [categoryId, category] of citadelCategories) {
+            if (channel.parent.parentId === categoryId) {
+                console.log(`✅ Thread in Citadel text channel (${channel.parent.name}) inside category (${category.name}) is allowed`);
                 return true;
             }
         }
     }
     
-    // RULE 3: Allow direct messages in Citadel channels (not just threads)
-    if (!channel.isThread() && channel.type === 0 && channel.parent) {
-        const citadelCategory = channel.guild.channels.cache.find(ch => 
-            ch.type === 4 && ch.name.toLowerCase().includes('citadel')
-        );
+    // RULE 3: Allow direct messages in Citadel text channels
+    if (!channel.isThread() && channel.type === 0 && channel.parentId) {
+        // Same Unicode-aware category detection
+        function normalizeText(text) {
+            return text
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^\w\s]/g, '')
+                .toLowerCase()
+                .trim();
+        }
         
-        if (citadelCategory && channel.parentId === citadelCategory.id) {
-            console.log(`✅ Direct message in Citadel channel (${channel.name}) is allowed`);
-            return true;
+        const citadelCategories = channel.guild.channels.cache.filter(ch => {
+            if (ch.type !== 4) return false;
+            
+            const normalizedName = normalizeText(ch.name);
+            return normalizedName.includes('citadel') || 
+                   normalizedName.includes('the citadel') ||
+                   ch.name.toLowerCase().includes('citadel') ||
+                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+        });
+        
+        for (const [categoryId, category] of citadelCategories) {
+            if (channel.parentId === categoryId) {
+                console.log(`✅ Direct message in Citadel text channel (${channel.name}) is allowed`);
+                return true;
+            }
         }
     }
     
-    // RULE 4: Enhanced detection for user-created Citadel channels
-    // Check if this channel is a user's personal Citadel channel by name pattern
+    // RULE 4: Allow user-created Citadel chambers
     if ((channel.isThread() && channel.parent) || (!channel.isThread() && channel.type === 0)) {
         const targetChannel = channel.isThread() ? channel.parent : channel;
         
-        // Check if channel name ends with "-chamber" (our Citadel channel naming pattern)
         if (targetChannel.name.endsWith('-chamber')) {
-            const citadelCategory = channel.guild.channels.cache.find(ch => 
-                ch.type === 4 && ch.name.toLowerCase().includes('citadel')
-            );
+            // Same Unicode-aware detection for chambers
+            function normalizeText(text) {
+                return text
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[^\w\s]/g, '')
+                    .toLowerCase()
+                    .trim();
+            }
             
-            if (citadelCategory && targetChannel.parentId === citadelCategory.id) {
-                console.log(`✅ ${channel.isThread() ? 'Thread in' : 'Direct message in'} user Citadel chamber (${targetChannel.name}) is allowed`);
-                return true;
+            const citadelCategories = channel.guild.channels.cache.filter(ch => {
+                if (ch.type !== 4) return false;
+                
+                const normalizedName = normalizeText(ch.name);
+                return normalizedName.includes('citadel') || 
+                       normalizedName.includes('the citadel') ||
+                       ch.name.toLowerCase().includes('citadel') ||
+                       ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+                       ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+                       ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+            });
+            
+            for (const [categoryId, category] of citadelCategories) {
+                if (targetChannel.parentId === categoryId) {
+                    console.log(`✅ User Citadel chamber (${targetChannel.name}) is allowed`);
+                    return true;
+                }
             }
         }
     }
     
     console.log(`❌ Channel/thread not allowed for feedback`);
-    console.log(`   Channel: ${channel.name} (${channel.type})`);
-    console.log(`   IsThread: ${channel.isThread()}`);
-    console.log(`   Parent: ${channel.parent?.name || 'None'}`);
-    console.log(`   Parent's Parent: ${channel.parent?.parent?.name || 'None'}`);
-    
     return false;
 }
 
@@ -1734,7 +1779,7 @@ async function handleFeedbackValidSlashCommand(interaction) {
         embed.addFields({ name: 'Achievement Unlocked!', value: unlockedAccess.trim(), inline: false });
     }
     
-    await replyTemporary(interaction, { embeds: [embed] });
+    await replyTemporary(interaction, { embeds: [embed], ephemeral: true }, 8000);
     
     // Send notification to feedback giver
     try {
@@ -1893,7 +1938,7 @@ async function createBalanceEmbed(user, member, guild) {
             { name: 'Monthly Feedback', value: `📄 ${monthlyFeedback.docs} docs | 💬 ${monthlyFeedback.comments} comments`, inline: true },
             { name: 'Monthly Quota', value: monthlyRequirementMet ? '✅ Met' : '❌ Not met', inline: true },
             { name: 'Validated Feedbacks', value: `📄 ${validatedFeedbacks.docs} docs | 💬 ${validatedFeedbacks.comments} comments`, inline: true },
-            { name: 'Demo Posts Used', value: `📚 ${userRecord.demoPosts || 0}/${BOOKSHELF_DEMO_LIMIT}`, inline: true },
+            { name: 'Demo Posts Used', value: `📚 ${userRecord.demo_posts || 0}/${BOOKSHELF_DEMO_LIMIT}`, inline: true },
             { name: 'Access Level', value: accessLevel, inline: false },
             { name: 'Monthly Requirement', value: 'Need: **2 full docs** OR **4 comments** OR **1 doc + 2 comments**', inline: false }
         )
