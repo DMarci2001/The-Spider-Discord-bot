@@ -1736,16 +1736,18 @@ async function handleFeedbackValidSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    // Add validated feedback to database
-    await addValidatedFeedback(feedbackGiver.id, feedbackType, validator.id, channel.id);
-    
-    // Remove pending feedback
-    await removePendingFeedback(feedbackGiver.id, channel.id);
-    
-    // Update the user's monthly feedback count
-    const monthlyFeedback = await global.db.getUserMonthlyFeedbackByType(feedbackGiver.id);
-    const newDocs = feedbackType === 'doc' ? monthlyFeedback.docs + 1 : monthlyFeedback.docs;
-    const newComments = feedbackType === 'comment' ? monthlyFeedback.comments + 1 : monthlyFeedback.comments;
+    // Get the current monthly feedback count BEFORE adding the new one
+const monthlyFeedback = await global.db.getUserMonthlyFeedbackByType(feedbackGiver.id);
+
+// Add validated feedback to database (this will auto-increment monthly counts)
+await addValidatedFeedback(feedbackGiver.id, feedbackType, validator.id, channel.id);
+
+// Remove pending feedback
+await removePendingFeedback(feedbackGiver.id, channel.id);
+
+// Calculate what the NEW counts should be (current + 1)
+const newDocs = feedbackType === 'doc' ? monthlyFeedback.docs + 1 : monthlyFeedback.docs;
+const newComments = feedbackType === 'comment' ? monthlyFeedback.comments + 1 : monthlyFeedback.comments;
     
     // Check if they now meet monthly requirements
     const meetingRequirement = checkMonthlyRequirementMet(newDocs, newComments);
