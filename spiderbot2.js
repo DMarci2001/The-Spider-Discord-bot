@@ -21,27 +21,16 @@ const STORE_ITEMS = {
     shelf: {
         name: "Bookshelf Access",
         description: "Grants you the **Shelf Owner** role (reader role required separately from staff)",
-        price: 1,
         role: "Shelf Owner",
         emoji: "📚",
         allowQuantity: false,
         category: "access"
-    },
-    lease: {
-        name: "Chapter Lease",
-        description: "Allows you to post one message in your bookshelf thread",
-        price: 1,
-        role: null,
-        emoji: "📝",
-        allowQuantity: true,
-        category: "utility"
     },
     // New color roles
     mocha_mousse: {
         name: "Mocha Mousse",
         description: "A warm, choccy brown that evokes comfort and grounding",
         color: 0xA47864,
-        price: 1,
         emoji: "🤎",
         year: "2025",
         category: "color",
@@ -51,7 +40,6 @@ const STORE_ITEMS = {
         name: "Peach Fuzz",
         description: "A soft, gentle peach that radiates warmth and community",
         color: 0xFFBE98,
-        price: 1,
         emoji: "🍑",
         year: "2024",
         category: "color",
@@ -61,7 +49,6 @@ const STORE_ITEMS = {
         name: "Magenta",
         description: "A bold, vibrant purple that screams vigor and craziness",
         color: 0xFF00FF,
-        price: 1,
         emoji: "🔮",
         year: "2023",
         category: "color",
@@ -71,7 +58,6 @@ const STORE_ITEMS = {
         name: "Very Peri",
         description: "A dynamic periwinkle blue with violet undertones",
         color: 0x6667AB,
-        price: 1,
         emoji: "💜",
         year: "2022",
         category: "color",
@@ -81,7 +67,6 @@ const STORE_ITEMS = {
         name: "Tangerine Tango",
         description: "A spirited orange that radiates energy and enthusiasm",
         color: 0xDD4124,
-        price: 1,
         emoji: "🍊",
         year: "2012",
         category: "color",
@@ -91,7 +76,6 @@ const STORE_ITEMS = {
         name: "Illuminating Yellow",
         description: "A bright, cheerful yellow that sparks optimism",
         color: 0xF5DF4D,
-        price: 1,
         emoji: "💛",
         year: "2021",
         category: "color",
@@ -101,7 +85,6 @@ const STORE_ITEMS = {
         name: "Teal",
         description: "A calming, serene blue-green that soothes the soul",
         color: 0x01889F,
-        price: 1,
         emoji: "🌊",
         category: "color",
         levelRequired: 15
@@ -110,7 +93,6 @@ const STORE_ITEMS = {
         name: "Living Coral",
         description: "An animating orange-pink that energizes and enlivens",
         color: 0xFF6F61,
-        price: 1,
         emoji: "🦩",
         year: "2019",
         category: "color",
@@ -120,7 +102,6 @@ const STORE_ITEMS = {
         name: "Marsala",
         description: "A rich, wine-red that exudes sophistication",
         color: 0x955251,
-        price: 1,
         emoji: "🍷",
         year: "2015",
         category: "color",
@@ -130,7 +111,6 @@ const STORE_ITEMS = {
         name: "Greenery",
         description: "A fresh, zesty yellow-green that revitalizes",
         color: 0x88B04B,
-        price: 1,
         emoji: "🌿",
         year: "2017",
         category: "color",
@@ -140,7 +120,6 @@ const STORE_ITEMS = {
         name: "Mimosa",
         description: "A warm, encouraging golden yellow",
         color: 0xF0C05A,
-        price: 1,
         emoji: "🥂",
         year: "2009",
         category: "color",
@@ -150,7 +129,6 @@ const STORE_ITEMS = {
         name: "Chilli Pepper",
         description: "A bold, spicy red that commands attention",
         color: 0x9B1B30,
-        price: 1,
         emoji: "🌶️",
         year: "2007",
         category: "color",
@@ -160,7 +138,6 @@ const STORE_ITEMS = {
         name: "Ultimate Gray",
         description: "A timeless, neutral gray",
         color: 0x939597,
-        price: 1,
         emoji: "🐘",
         year: "2021",
         category: "color",
@@ -732,11 +709,6 @@ async function getUserMonthlyFeedback(userId) {
     return await global.db.getUserMonthlyFeedbackByType(userId);
 }
 
-async function setUserMonthlyFeedback(userId, count) {
-    const monthKey = getCurrentMonthKey();
-    await global.db.setUserMonthlyFeedback(userId, monthKey, Math.max(0, count));
-}
-
 function hasLevel5Role(member) {
     if (!member?.roles?.cache) {
         console.log('Invalid member object');
@@ -770,38 +742,6 @@ async function spendCredits(userId, amount) {
     
     console.log(`Insufficient credits for ${userId}: has ${userData.currentCredits}, needs ${validAmount}`);
     return false;
-}
-
-async function consumeLease(userId) {
-    const userData = await getUserData(userId);
-    
-    if (userData.chapterLeases > 0) {
-        await updateUserData(userId, { 
-            chapterLeases: userData.chapterLeases - 1,
-            bookshelfPosts: userData.bookshelfPosts + 1
-        });
-        console.log(`User ${userId} consumed 1 lease. Remaining: ${userData.chapterLeases - 1}`);
-        return true;
-    }
-    
-    console.log(`No leases available for ${userId}`);
-    return false;
-}
-
-async function addLeases(userId, amount) {
-    const userData = await getUserData(userId);
-    await updateUserData(userId, { 
-        chapterLeases: userData.chapterLeases + amount 
-    });
-    console.log(`Added ${amount} leases to user ${userId}. Total: ${userData.chapterLeases + amount}`);
-}
-
-async function addPurchase(userId, item) {
-    try {
-        await global.db.addPurchase(userId, item);
-    } catch (error) {
-        console.error(`Error adding purchase for ${userId}:`, error);
-    }
 }
 
 // FIXED: Enhanced isInAllowedFeedbackThread function with better Citadel detection
@@ -1113,37 +1053,13 @@ const commands = [
             )),
     
     new SlashCommandBuilder()
-        .setName('balance')
+        .setName('progress')
         .setDescription('Check your feedback credits and access levels')
         .addUserOption(option => option.setName('user').setDescription('User to check (optional)').setRequired(false)),
-    
+
     new SlashCommandBuilder()
-        .setName('store')
-        .setDescription('View available items in the Type&Draft store'),
-    
-    new SlashCommandBuilder()
-        .setName('buy')
-        .setDescription('Purchase an item from the store')
-        .addStringOption(option => option.setName('item').setDescription('Item to purchase').setRequired(true)
-            .addChoices(
-                { name: 'Bookshelf Access (1 credit)', value: 'shelf' },
-                { name: 'Chapter Lease (1 credit)', value: 'lease' },
-                // Color roles - Level 15 required
-                { name: '🤎 Mocha Mousse (2025) - 1 credit', value: 'mocha_mousse' },
-                { name: '🍑 Peach Fuzz (2024) - 1 credit', value: 'peach_fuzz' },
-                { name: '🔮 Magenta (2023) - 1 credit', value: 'magenta' },
-                { name: '💜 Very Peri (2022) - 1 credit', value: 'very_peri' },
-                { name: '🍊 Tangerine Tango (2012) - 1 credit', value: 'tangerine_tango' },
-                { name: '💛 Illuminating Yellow (2021) - 1 credit', value: 'illuminating_yellow' },
-                { name: '🌊 Teal - 1 credit', value: 'teal' },
-                { name: '🦩 Living Coral (2019) - 1 credit', value: 'living_coral' },
-                { name: '🍷 Marsala (2015) - 1 credit', value: 'marsala' },
-                { name: '🌿 Greenery (2017) - 1 credit', value: 'greenery' },
-                { name: '🥂 Mimosa (2009) - 1 credit', value: 'mimosa' },
-                { name: '🌶️ Chilli Pepper (2007) - 1 credit', value: 'chilli_pepper' },
-                { name: '🐘 Ultimate Gray (2021) - 1 credit', value: 'ultimate_gray' }
-            ))
-        .addIntegerOption(option => option.setName('quantity').setDescription('Quantity to purchase (only for leases)').setRequired(false).setMinValue(1).setMaxValue(50)),
+    .setName('color_role')
+    .setDescription('Choose your color role (15 total validated feedbacks required)'),
     
     new SlashCommandBuilder()
         .setName('citadel_channel')
@@ -1178,25 +1094,7 @@ const commands = [
         .setName('feedback_reset')
         .setDescription('Reset member\'s entire record to zero (Staff only)')
         .addUserOption(option => option.setName('user').setDescription('User to reset').setRequired(true)),
-    
-    new SlashCommandBuilder()
-        .setName('credit_add')
-        .setDescription('Add credits to a member\'s current balance only (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to add credits to').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of credits to add (default: 1)').setRequired(false)),
 
-    new SlashCommandBuilder()
-        .setName('credit_remove')
-        .setDescription('Remove credits from a member\'s current balance only (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to remove credits from').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of credits to remove (default: 1)').setRequired(false)),
-    
-    new SlashCommandBuilder()
-        .setName('lease_add')
-        .setDescription('Add chapter leases to a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to add leases to').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of leases to add (default: 1)').setRequired(false)),
-    
     new SlashCommandBuilder()
         .setName('stats')
         .setDescription('View detailed server statistics (Staff only)'),
@@ -1214,11 +1112,6 @@ const commands = [
     new SlashCommandBuilder()
         .setName('pardoned_last_month')
         .setDescription('View all members who were pardoned last month (Staff only)'),
-    
-    new SlashCommandBuilder()
-        .setName('setup_bookshelf')
-        .setDescription('Grant bookshelf access to a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('Member to grant bookshelf access to').setRequired(true)),
 
     new SlashCommandBuilder()
         .setName('purge_list')
@@ -1520,8 +1413,7 @@ async function handleCommand(message) {
         const commandHandlers = {
             feedback: () => handleFeedbackCommand(message),
             help: () => handleHelpCommand(message),
-            balance: () => handleBalanceCommand(message),
-            store: () => handleStoreCommand(message)
+            progress: () => handleBalanceCommand(message)
         };
         
         const handler = commandHandlers[command];
@@ -1538,9 +1430,8 @@ async function handleSlashCommand(interaction) {
     const commandHandlers = {
         feedback: () => handleFeedbackSlashCommand(interaction),
         feedback_valid: () => handleFeedbackValidSlashCommand(interaction),
-        balance: () => handleBalanceSlashCommand(interaction),
-        store: () => handleStoreSlashCommand(interaction),
-        buy: () => handleBuySlashCommand(interaction),
+        progress: () => handleBalanceSlashCommand(interaction),
+        color_role: () => handleColorRoleSlashCommand(interaction),
         citadel_channel: () => handleCitadelChannelSlashCommand(interaction),
         hall_of_fame: () => handleHallOfFameSlashCommand(interaction),
         help: () => handleHelpSlashCommand(interaction),
@@ -1549,14 +1440,10 @@ async function handleSlashCommand(interaction) {
         feedback_add: () => handleFeedbackAddSlashCommand(interaction),
         feedback_remove: () => handleFeedbackRemoveSlashCommand(interaction),
         feedback_reset: () => handleFeedbackResetSlashCommand(interaction),
-        credit_add: () => handleCreditAddSlashCommand(interaction),
-        credit_remove: () => handleCreditRemoveSlashCommand(interaction),
-        lease_add: () => handleLeaseAddSlashCommand(interaction),
         stats: () => handleStatsSlashCommand(interaction),
         pardon: () => handlePardonSlashCommand(interaction),
         unpardon: () => handleUnpardonSlashCommand(interaction),
         pardoned_last_month: () => handlePardonedLastMonthSlashCommand(interaction),
-        setup_bookshelf: () => handleSetupBookshelfSlashCommand(interaction),
         purge_list: () => handlePurgeListSlashCommand(interaction),
         manual_purge: () => handleManualPurgeSlashCommand(interaction),
         post_server_guide: () => handlePostServerGuideSlashCommand(interaction),
@@ -1967,7 +1854,7 @@ async function handleCitadelChannelSlashCommand(interaction) {
     }
 }
 
-// ===== BALANCE COMMANDS =====
+// ===== PROGRESS COMMANDS =====
 async function handleBalanceCommand(message) {
     const user = message.mentions.users.first() || message.author;
     const member = message.mentions.members.first() || message.member;
@@ -2006,13 +1893,164 @@ async function createBalanceEmbed(user, member, guild) {
             { name: 'Monthly Feedback', value: `📄 ${monthlyFeedback.docs} docs | 💬 ${monthlyFeedback.comments} comments`, inline: true },
             { name: 'Monthly Quota', value: monthlyRequirementMet ? '✅ Met' : '❌ Not met', inline: true },
             { name: 'Validated Feedbacks', value: `📄 ${validatedFeedbacks.docs} docs | 💬 ${validatedFeedbacks.comments} comments`, inline: true },
-            { name: 'Current Credits', value: `💰 ${userRecord.currentCredits}`, inline: true },
-            { name: 'Chapter Leases', value: `📄 ${userRecord.chapterLeases}`, inline: true },
             { name: 'Demo Posts Used', value: `📚 ${userRecord.demoPosts || 0}/${BOOKSHELF_DEMO_LIMIT}`, inline: true },
             { name: 'Access Level', value: accessLevel, inline: false },
             { name: 'Monthly Requirement', value: 'Need: **2 full docs** OR **4 comments** OR **1 doc + 2 comments**', inline: false }
         )
         .setColor(monthlyRequirementMet ? 0x00AA55 : 0xFF9900);
+}
+
+// ===== COLOR ROLE COMMANDS =====
+
+async function handleColorRoleSlashCommand(interaction) {
+    const user = interaction.user;
+    const member = interaction.member;
+    const guild = interaction.guild;
+    
+    // Check Level 15 requirement
+    if (!hasLevel15Role(member)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Level 15 Required ☝️')
+            .setDescription('Color roles are reserved for our most distinguished **Level 15** members.')
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    // Check total validated feedbacks requirement
+    const totalFeedbacks = await getUserValidatedFeedbacks(user.id);
+    
+    if (totalFeedbacks < 15) {
+        const embed = new EmbedBuilder()
+            .setTitle('Insufficient Validated Feedbacks ☝️')
+            .setDescription(`You need **15 total validated feedbacks** to unlock color roles.`)
+            .addFields({
+                name: 'Current Progress',
+                value: `• **Level 15**: ✅\n• **Validated Feedbacks**: ${totalFeedbacks}/15`,
+                inline: false
+            },
+            {
+                name: 'How to Progress',
+                value: 'Give quality feedback in bookshelf-discussion and Citadel channels, then ask authors to validate with `/feedback_valid`.',
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    // Create color selection menu
+    const colorOptions = [];
+    const colorItems = Object.entries(STORE_ITEMS).filter(([key, item]) => item.category === 'color');
+    
+    for (const [key, item] of colorItems.slice(0, 25)) { // Discord limit of 25 options
+        colorOptions.push({
+            label: item.name,
+            description: item.description.substring(0, 100), // Discord limit
+            value: key,
+            emoji: item.emoji
+        });
+    }
+    
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('color_role_select')
+        .setPlaceholder('Choose your color role...')
+        .addOptions(colorOptions);
+    
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+    
+    const embed = new EmbedBuilder()
+        .setTitle('Select Your Color Role ☝️')
+        .setDescription(`Congratulations! With **${totalFeedbacks} validated feedbacks**, you've unlocked access to our color roles.`)
+        .addFields({
+            name: '🎨 Available Colors',
+            value: 'Choose from our collection of distinguished color roles. Your previous color will be automatically replaced.',
+            inline: false
+        },
+        {
+            name: '✨ Colors of the Year',
+            value: 'Many of these are official Pantone Color of the Year selections from various years.',
+            inline: false
+        })
+        .setColor(0xFFD700);
+    
+    const response = await interaction.reply({ 
+        embeds: [embed], 
+        components: [row], 
+        ephemeral: true 
+    });
+    
+    // Wait for selection
+    try {
+        const selection = await response.awaitMessageComponent({ 
+            time: 60000 
+        });
+        
+        const selectedColorKey = selection.values[0];
+        const selectedColor = STORE_ITEMS[selectedColorKey];
+        
+        // Check if they already have this color
+        const currentlyHasThisColor = member.roles.cache.some(role => role.name === selectedColor.name);
+        if (currentlyHasThisColor) {
+            const alreadyHasEmbed = new EmbedBuilder()
+                .setTitle('Color Already Active ☝️')
+                .setDescription(`You already have the **${selectedColor.name}** color role.`)
+                .setColor(selectedColor.color);
+            
+            await selection.update({ embeds: [alreadyHasEmbed], components: [] });
+            return;
+        }
+        
+        // Assign the color role
+        try {
+            await assignColorRole(member, guild, selectedColorKey);
+            
+            const successEmbed = new EmbedBuilder()
+                .setTitle('Color Role Assigned ☝️')
+                .setDescription(`You now proudly wear **${selectedColor.name}**!`)
+                .addFields({
+                    name: 'New Color',
+                    value: `${selectedColor.emoji} **${selectedColor.name}**`,
+                    inline: true
+                },
+                {
+                    name: 'Achievement',
+                    value: `Unlocked with ${totalFeedbacks} validated feedbacks`,
+                    inline: true
+                })
+                .setColor(selectedColor.color);
+            
+            await selection.update({ embeds: [successEmbed], components: [] });
+            
+            // Remove all previous color purchases and add new one
+            await removeAllUserColorPurchases(user.id);
+            await global.db.addPurchase(user.id, selectedColorKey);
+            
+        } catch (error) {
+            console.error('Color role assignment failed:', error);
+            
+            const errorEmbed = new EmbedBuilder()
+                .setTitle('Color Assignment Failed ☝️')
+                .setDescription('There was an error assigning your color role. Please try again or contact staff.')
+                .setColor(0xFF6B6B);
+            
+            await selection.update({ embeds: [errorEmbed], components: [] });
+        }
+        
+    } catch (error) {
+        console.error('Color selection timeout or error:', error);
+        
+        const timeoutEmbed = new EmbedBuilder()
+            .setTitle('Selection Timeout ☝️')
+            .setDescription('Color selection timed out. Please use `/color_role` again to choose your color.')
+            .setColor(0xFF6B6B);
+        
+        try {
+            await interaction.editReply({ embeds: [timeoutEmbed], components: [] });
+        } catch (editError) {
+            console.error('Failed to edit reply after timeout:', editError);
+        }
+    }
 }
 
 // ===== HALL OF FAME COMMANDS =====
@@ -2065,208 +2103,6 @@ async function createHallOfFameEmbed(guild) {
     }
 }
 
-// ===== STORE AND BUY COMMANDS =====
-async function handleStoreSlashCommand(interaction) {
-    const embed = createStoreEmbed(interaction.guild);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-function createStoreEmbed(guild) {
-    const channels = getClickableChannelMentions(guild);
-    const roles = getClickableRoleMentions(guild);
-    
-    const colorItems = Object.entries(STORE_ITEMS).filter(([key, item]) => item.category === 'color');
-    const colorList = colorItems.slice(0, 10).map(([key, item]) => {
-        return `${item.emoji} **${item.name}**`;
-    }).join(' • ');
-    
-    return new EmbedBuilder()
-        .setTitle('Type&Draft Literary Emporium ☝️')
-        .addFields(
-            { 
-                name: '📚 Bookshelf Access (DEPRECATED)', 
-                value: `⚠️ **Note**: The old bookshelf system is being phased out. New system:\n• **Level 5**: Demo bookshelf access\n• **Level 10 + 2 Google Doc or 4 comment feedbacks**: Post demo chapters\n• **Level 15 + 3 validated feedbacks**: Own Citadel channel`, 
-                inline: false 
-            },
-            { 
-                name: '📝 Chapter Lease (Legacy)', 
-                value: `Only needed for old bookshelf system\n**Price:** ${STORE_ITEMS.lease.price} credit each`, 
-                inline: false 
-            },
-            { 
-                name: '🎨 Color Roles (Level 15 Required, 1 credit each)', 
-                value: colorList + "\n• **Note:** Real Pantone Color of the Year winners", 
-                inline: false 
-            },
-            { 
-                name: 'How to Purchase', 
-                value: `• \`/buy lease\` - Purchase chapter leases (legacy)\n• \`/buy [color_name]\` - Purchase a color role`, 
-                inline: false 
-            },
-            { 
-                name: 'New Progression System', 
-                value: `• Give quality feedback in ${channels.bookshelfDiscussion} or Citadel channels\n• Use \`/feedback\` to log your contribution\n• Ask work authors to validate with \`/feedback_valid\`\n• Earn access through validated feedback quality`, 
-                inline: false 
-            }
-        )
-        .setColor(0xFF8C00)
-        .setFooter({ text: 'All purchases support our thriving literary community.' });
-}
-
-async function handleBuySlashCommand(interaction) {
-    const itemKey = interaction.options.getString('item');
-    const quantity = STORE_ITEMS[itemKey]?.allowQuantity ? (interaction.options.getInteger('quantity') || 1) : 1;
-    const result = await processPurchase(interaction.user.id, itemKey, quantity, interaction.member, interaction.guild);
-    const embed = createPurchaseResultEmbed(interaction.user, itemKey, quantity, result, interaction.guild);
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-// ===== PURCHASE PROCESSING =====
-async function processPurchase(userId, itemKey, quantity, member, guild) {
-    const item = STORE_ITEMS[itemKey];
-    const userRecord = await getUserData(userId);
-    const totalCost = item.price * quantity;
-    
-    if (item.category === 'color' && item.levelRequired) {
-        if (!hasLevel15Role(member)) {
-            return { 
-                success: false, 
-                reason: 'insufficient_level',
-                requiredLevel: item.levelRequired
-            };
-        }
-    }
-    
-    if (itemKey === 'shelf') {
-        return {
-            success: false,
-            reason: 'deprecated_item'
-        };
-    }
-    
-    if (item.category === 'color') {
-        const currentlyHasThisColor = member.roles.cache.some(role => role.name === item.name);
-        if (currentlyHasThisColor) {
-            return { success: false, reason: 'color_already_active' };
-        }
-    }
-    
-    if (userRecord.currentCredits < totalCost) {
-        return {
-            success: false,
-            reason: 'insufficient_credits',
-            needed: totalCost - userRecord.currentCredits,
-            current: userRecord.currentCredits,
-            totalCost: totalCost
-        };
-    }
-    
-    if (await spendCredits(userId, totalCost)) {
-        if (itemKey === 'lease') {
-            await addLeases(userId, quantity);
-            return { success: true, creditsSpent: totalCost, quantity: quantity };
-        } else if (item.category === 'color') {
-            try {
-                await assignColorRole(member, guild, itemKey);
-                await removeAllUserColorPurchases(userId);
-                await global.db.addPurchase(userId, itemKey);
-                return { 
-                    success: true, 
-                    creditsSpent: totalCost, 
-                    quantity: quantity,
-                    newColor: item.name,
-                    replaced: true
-                };
-            } catch (error) {
-                console.error('Color role assignment failed:', error);
-                const userData = await getUserData(userId);
-                await updateUserData(userId, { 
-                    currentCredits: userData.currentCredits + totalCost 
-                });
-                return { success: false, reason: 'color_role_failed' };
-            }
-        }
-    }
-    
-    return { success: false, reason: 'unknown_error' };
-}
-
-function createPurchaseResultEmbed(user, itemKey, quantity, result, guild) {
-    const item = STORE_ITEMS[itemKey];
-    
-    if (!result.success) {
-        if (result.reason === 'deprecated_item') {
-            return new EmbedBuilder()
-                .setTitle('Item No Longer Available ☝️')
-                .setDescription('The bookshelf access system has been replaced with a new progression system based on validated feedback.')
-                .addFields({
-                    name: 'New System',
-                    value: '• **Level 5**: Demo bookshelf access\n• **Level 10 + 2 Google Doc or 4 comment feedbacks**: Post demo chapters\n• **Level 15 + 3 validated feedbacks**: Own Citadel channel',
-                    inline: false
-                })
-                .setColor(0xFF9900);
-        }
-        
-        if (result.reason === 'color_already_active') {
-            return new EmbedBuilder()
-                .setTitle('Color Currently Active ☝️')
-                .setColor(0xFF9900);
-        }
-        
-        if (result.reason === 'insufficient_level') {
-            return new EmbedBuilder()
-                .setTitle(`Level ${result.requiredLevel} Required ☝️`)
-                .setDescription(`Color roles are reserved for our most distinguished members who have reached **Level ${result.requiredLevel}** status.`)
-                .setColor(0xFF9900);
-        }
-        
-        if (result.reason === 'insufficient_credits') {
-            return new EmbedBuilder()
-                .setTitle('Insufficient Credits')
-                .addFields({
-                    name: 'Required Amount', value: `${result.totalCost} credit${result.totalCost === 1 ? '' : 's'}`, inline: true
-                }, {
-                    name: 'Still Needed', value: `${result.needed} more credit${result.needed === 1 ? '' : 's'}`, inline: true
-                })
-                .setColor(0xFF6B6B);
-        }
-        
-        return new EmbedBuilder().setTitle('Purchase Failed').setColor(0xFF6B6B);
-    }
-    
-    // Success cases
-    if (itemKey === 'lease') {
-        return new EmbedBuilder()
-            .setTitle('Lease Purchase Completed ☝️')
-            .setDescription('**Note**: Leases are now mainly for legacy bookshelf system. New system uses validated feedback progression.')
-            .addFields(
-                { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true }
-            )
-            .setColor(0x00AA55);
-    } else if (item.category === 'color') {
-        const title = result.replaced ? 'Color Role Replaced ☝️' : 'Color Role Acquired ☝️';
-        const description = result.replaced ? 
-            'Your previous color role has been replaced with your new selection.' : 
-            'Your new color role has been successfully assigned.';
-        
-        return new EmbedBuilder()
-            .setTitle(title)
-            .setDescription(description)
-            .addFields(
-                { name: 'New Color Role', value: `${item.emoji} **${item.name}**`, inline: true },
-                { name: 'Credits Spent', value: `${result.creditsSpent}`, inline: true }
-            )
-            .setColor(item.color);
-    }
-    
-    return new EmbedBuilder()
-        .setTitle('Purchase Completed ☝️')
-        .addFields(
-            { name: 'Credits Spent', value: `📝 ${result.creditsSpent}`, inline: true }
-        )
-        .setColor(0x00AA55);
-}
-
 // ===== HELP COMMANDS =====
 async function handleHelpSlashCommand(interaction) {
     const embed = createHelpEmbed(interaction.guild);
@@ -2296,8 +2132,8 @@ function createHelpEmbed(guild) {
                 inline: false 
             },
             { 
-                name: '💰 User and Economy Commands', 
-                value: '`/balance` - Check your progress and access levels\n`/feedback` - Log your feedback contribution\n`/feedback_valid` - Validate someone\'s feedback (thread owners)\n`/citadel_channel` - Create your own channel (Level 15 + validated)\n`/hall_of_fame` - View top contributors', 
+                name: '👤 User Commands', 
+                value: '`/progress` - Check your progress and access levels\n`/feedback` - Log your feedback contribution\n`/feedback_valid` - Validate someone\'s feedback (thread owners)\n`/citadel_channel` - Create your own channel (Level 15 + validated)\n`/hall_of_fame` - View top contributors\n`/color_role` - Choose a unique color role (Level 15 + 15 validated feedbacks required)', 
                 inline: false 
             },
             { 
@@ -2506,66 +2342,6 @@ async function handleFeedbackResetSlashCommand(interaction) {
         
         await replyTemporary(interaction, { embeds: [errorEmbed] });
     }
-}
-
-// ===== CREDIT MANAGEMENT =====
-async function handleCreditAddSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
-    
-    await global.db.addCredits(user.id, amount);
-    
-    const embed = new EmbedBuilder()
-        .setTitle('Credits Added ☝️')
-        .setDescription(`Added **${amount}** credit${amount !== 1 ? 's' : ''} to ${user.displayName}'s balance.`)
-        .setColor(0x00AA55);
-    
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function handleCreditRemoveSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
-    
-    const userData = await getUserData(user.id);
-    const actualRemoved = Math.min(amount, userData.currentCredits);
-    
-    await updateUserData(user.id, { 
-        currentCredits: userData.currentCredits - actualRemoved 
-    });
-    
-    const embed = new EmbedBuilder()
-        .setTitle('Credits Removed ☝️')
-        .setDescription(`Removed **${actualRemoved}** credit${actualRemoved !== 1 ? 's' : ''} from ${user.displayName}'s balance.`)
-        .setColor(0xFF6B6B);
-    
-    await replyTemporary(interaction, { embeds: [embed] });
-}
-
-async function handleLeaseAddSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    const user = interaction.options.getUser('user');
-    const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
-    
-    await global.db.addLeases(user.id, amount);
-    
-    const embed = new EmbedBuilder()
-        .setTitle('Leases Added ☝️')
-        .setDescription(`Added **${amount}** lease${amount !== 1 ? 's' : ''} to ${user.displayName}.`)
-        .setColor(0x00AA55);
-    
-    await replyTemporary(interaction, { embeds: [embed] });
 }
 
 // ===== PARDON COMMANDS =====
@@ -3046,11 +2822,6 @@ function createAllCommandsEmbed() {
             { 
                 name: '👑 New Feedback Management', 
                 value: '`/feedback_add` - Add validated feedbacks to a user\n`/feedback_remove` - Remove validated feedbacks from a user\n`/feedback_reset` - Complete reset (includes validated feedbacks)\n`/stats` - View detailed server statistics with new system', 
-                inline: false 
-            },
-            { 
-                name: '👑 Credit & Lease Management', 
-                value: '`/credit_add` - Add credits to user balance\n`/credit_remove` - Remove credits from user balance\n`/lease_add` - Add chapter leases to a user', 
                 inline: false 
             },
             { 
