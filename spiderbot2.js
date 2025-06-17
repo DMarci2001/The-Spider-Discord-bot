@@ -2346,21 +2346,21 @@ async function handleColorRoleSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    // Check total validated feedbacks requirement
-    const totalFeedbacks = await getUserValidatedFeedbacks(user.id);
+    // FIXED: Check DOC FEEDBACKS ONLY requirement (not total feedbacks)
+    const validatedFeedbacks = await getUserValidatedFeedbacksByType(user.id);
+    const docFeedbacks = validatedFeedbacks.docs; // Only count doc feedbacks
     
-    if (totalFeedbacks < 15) {
+    if (docFeedbacks < 15) {
         const embed = new EmbedBuilder()
-            .setTitle('Insufficient Validated Feedbacks ☝️')
-            .setDescription(`You need **15 total validated feedbacks** to unlock color roles.`)
+            .setTitle('Insufficient Validated Doc Feedbacks ☝️')
             .addFields({
                 name: 'Current Progress',
-                value: `• **Level 15**: ✅\n• **Validated Feedbacks**: ${totalFeedbacks}/15`,
+                value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${docFeedbacks}/15`,
                 inline: false
             },
             {
                 name: 'How to Progress',
-                value: 'Give quality feedback in bookshelf-discussion and Citadel channels, then ask authors to validate with `/feedback_valid`.',
+                value: 'Give quality **full Google Doc reviews** in bookshelf-discussion and Citadel channels, then ask authors to validate with `/feedback_valid` using the "📄 Full Google Doc Review" option.',
                 inline: false
             })
             .setColor(0xFF9900);
@@ -2390,7 +2390,7 @@ async function handleColorRoleSlashCommand(interaction) {
     
     const embed = new EmbedBuilder()
         .setTitle('Select Your Color Role ☝️')
-        .setDescription(`Congratulations! With **${totalFeedbacks} validated feedbacks**, you've unlocked access to our color roles.`)
+        .setDescription(`Congratulations! With **${docFeedbacks} validated doc feedbacks**, you've unlocked access to our color roles.`)
         .addFields({
             name: '🎨 Available Colors',
             value: 'Choose from our collection of distinguished color roles. Your previous color will be automatically replaced.',
@@ -2443,7 +2443,7 @@ async function handleColorRoleSlashCommand(interaction) {
                 },
                 {
                     name: 'Achievement',
-                    value: `Unlocked with ${totalFeedbacks} validated feedbacks`,
+                    value: `Unlocked with ${docFeedbacks} validated doc feedbacks`,
                     inline: true
                 })
                 .setColor(selectedColor.color);
