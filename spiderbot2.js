@@ -1425,59 +1425,70 @@ client.on('messageCreate', async (message) => {
         });
     }
 
-    // BOOKSHELF DEMO POSTING LIMITS
+    // BOOKSHELF DEMO POSTING LIMITS - UPDATED
     if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
+    
+    if (message.channel.ownerId !== message.author.id) {
+        await message.delete();
+        await sendTemporaryChannelMessage(message.channel, 
+            `Only the thread creator can post here, **${message.author.displayName}**! ☝️`,
+            8000
+        );
+        return;
+    }
+    
+    // Check demo post limit - FIRST MESSAGE IS ALWAYS FREE
+    try {
+        const messages = await message.channel.messages.fetch({ limit: 50 });
+        const ownerMessages = messages.filter(msg => 
+            msg.author.id === message.channel.ownerId && 
+            msg.id !== message.id // Exclude current message
+        );
         
-        if (message.channel.ownerId !== message.author.id) {
-            await message.delete();
+        const totalOwnerMessages = ownerMessages.size + 1; // +1 for current message
+        
+        // First message is always free (for blurb, warnings, etc.)
+        if (totalOwnerMessages === 1) {
             await sendTemporaryChannelMessage(message.channel, 
-                `Only the thread creator can post here, **${message.author.displayName}**! ☝️`,
+                `📚 **Blurb posted!** This first message is free for your story description, trigger warnings, etc. You can post **${BOOKSHELF_DEMO_LIMIT} demo chapters** after this! ☝️`,
                 8000
             );
             return;
         }
         
-        // Check demo post limit
-        try {
-            const messages = await message.channel.messages.fetch({ limit: 50 });
-            const ownerMessages = messages.filter(msg => 
-                msg.author.id === message.channel.ownerId && 
-                msg.id !== message.id
+        // Count demo chapters (excluding the first free message)
+        const demoChapterCount = totalOwnerMessages - 1;
+        
+        if (demoChapterCount > BOOKSHELF_DEMO_LIMIT) {
+            await message.delete();
+            await sendTemporaryChannelMessage(message.channel, 
+                `📚 **Demo limit reached!** You can post **1 free blurb** + **${BOOKSHELF_DEMO_LIMIT} demo chapters**. To get unlimited posting, reach **Level 15** and get **3 additional doc OR 5 additional comment validated feedbacks** to create your own Citadel channel! ☝️`,
+                12000
             );
-            
-            const currentPostCount = ownerMessages.size + 1; // +1 for current message
-            
-            if (currentPostCount > BOOKSHELF_DEMO_LIMIT) {
-                await message.delete();
-                await sendTemporaryChannelMessage(message.channel, 
-                    `📚 **Demo limit reached!** You can only post **${BOOKSHELF_DEMO_LIMIT} messages** in the demo bookshelf. To get unlimited posting, reach **Level 15** and get **3 additional doc OR 5 additional comment validated feedbacks** to create your own Citadel channel! ☝️`,
-                    12000
-                );
-                return;
-            }
-            
-            // Increment demo post count
-            await global.db.incrementBookshelfDemoPostCount(message.author.id);
-            
-            if (currentPostCount === BOOKSHELF_DEMO_LIMIT) {
-                await sendTemporaryChannelMessage(message.channel, 
-                    `📚 **Final demo post!** You've used ${currentPostCount}/${BOOKSHELF_DEMO_LIMIT} demo posts. Reach **Level 15** + **3 additional doc OR 5 additional comment validated feedbacks** for your own unlimited Citadel channel! ☝️`,
-                    12000
-                );
-            } else {
-                await sendTemporaryChannelMessage(message.channel, 
-                    `📚 Demo post ${currentPostCount}/${BOOKSHELF_DEMO_LIMIT} posted! ☝️`,
-                    8000
-                );
-            }
-            
-        } catch (error) {
-            console.error('Error checking demo post count:', error);
+            return;
         }
         
-        return;
+        // Increment demo post count (only for actual chapters, not the first free message)
+        await global.db.incrementBookshelfDemoPostCount(message.author.id);
+        
+        if (demoChapterCount === BOOKSHELF_DEMO_LIMIT) {
+            await sendTemporaryChannelMessage(message.channel, 
+                `📚 **Final demo chapter!** You've used ${demoChapterCount}/${BOOKSHELF_DEMO_LIMIT} demo chapters (plus 1 free blurb). Reach **Level 15** + **3 additional doc OR 5 additional comment validated feedbacks** for your own unlimited Citadel channel! ☝️`,
+                12000
+            );
+        } else {
+            await sendTemporaryChannelMessage(message.channel, 
+                `📚 Demo chapter ${demoChapterCount}/${BOOKSHELF_DEMO_LIMIT} posted! (Plus 1 free blurb) ☝️`,
+                8000
+            );
+        }
+        
+    } catch (error) {
+        console.error('Error checking demo post count:', error);
     }
-
+    
+    return;
+}
     // Handle legacy commands
     if (message.content.startsWith('!')) {
         await handleCommand(message);
