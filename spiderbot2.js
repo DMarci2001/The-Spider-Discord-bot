@@ -1068,12 +1068,42 @@ async function findUserLatestMessage(channel, userId) {
             return null;
         }
         
+        // Get the latest message
         const latestMessage = userMessages.first();
-        console.log(`Found latest message for user ${userId}: "${latestMessage.content.substring(0, 50)}..."`);
+        
+        // FIXED: Check if this specific message was already logged for feedback
+        const alreadyLogged = await hasUserLoggedFeedbackForMessage(latestMessage.id, userId);
+        
+        if (alreadyLogged) {
+            console.log(`Latest message ${latestMessage.id} already used for feedback by user ${userId}`);
+            return null;
+        }
+        
+        console.log(`Found valid latest message for user ${userId}: "${latestMessage.content.substring(0, 50)}..."`);
         return latestMessage;
     } catch (error) {
         console.error('Error fetching user messages:', error);
         return null;
+    }
+}
+
+async function hasUserLoggedFeedbackForMessage(messageId, userId) {
+    try {
+        // Check if this specific message was already used for pending or validated feedback
+        const pendingCheck = await global.db.getRow(
+            'SELECT id FROM pending_feedback WHERE user_id = ? AND message_id = ?',
+            [userId, messageId]
+        );
+        
+        if (pendingCheck) return true;
+        
+        // You might also want to check a message_feedback table if you track that
+        // For now, we'll just check pending feedback since that's where message_id is stored
+        
+        return false;
+    } catch (error) {
+        console.error('Error checking logged feedback for message:', error);
+        return false;
     }
 }
 
@@ -1092,6 +1122,16 @@ const commands = [
                 { name: '📄 Full Google Doc Review', value: 'doc' },
                 { name: '💬 In-line Comments Only', value: 'comment' }
             )),
+    
+    new SlashCommandBuilder()
+    .setName('feedback_invalid')
+    .setDescription('Invalidate/remove a validated feedback from your thread (Thread owners only)')
+    .addUserOption(option => option.setName('user').setDescription('User whose feedback to invalidate').setRequired(true))
+    .addStringOption(option => option.setName('type').setDescription('Type of feedback to invalidate').setRequired(true)
+        .addChoices(
+            { name: '📄 Full Google Doc Review', value: 'doc' },
+            { name: '💬 In-line Comments Only', value: 'comment' }
+        )),
     
     new SlashCommandBuilder()
         .setName('progress')
@@ -1482,6 +1522,7 @@ async function handleSlashCommand(interaction) {
     const commandHandlers = {
         feedback: () => handleFeedbackSlashCommand(interaction),
         feedback_valid: () => handleFeedbackValidSlashCommand(interaction),
+        feedback_invalid: () => handleFeedbackInvalidSlashCommand(interaction),
         progress: () => handleBalanceSlashCommand(interaction),
         color_role: () => handleColorRoleSlashCommand(interaction),
         citadel_channel: () => handleCitadelChannelSlashCommand(interaction),
@@ -1721,7 +1762,6 @@ async function handleFeedbackValidSlashCommand(interaction) {
     if (!pendingFeedback) {
         const embed = new EmbedBuilder()
             .setTitle('No Pending Feedback Found ☝️')
-            .setDescription(`${feedbackGiver.displayName} has no pending feedback in this thread. They must use \`/feedback\` first.`)
             .setColor(0xFF9900);
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -1731,7 +1771,6 @@ async function handleFeedbackValidSlashCommand(interaction) {
     if (pendingFeedback.feedback_type !== feedbackType) {
         const embed = new EmbedBuilder()
             .setTitle('Feedback Type Mismatch ☝️')
-            .setDescription(`${feedbackGiver.displayName} submitted **${pendingFeedback.feedback_type === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}** but you're trying to validate **${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}**.`)
             .addFields({
                 name: 'Submitted Type',
                 value: `${pendingFeedback.feedback_type === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments'}`,
@@ -1819,6 +1858,129 @@ const newComments = feedbackType === 'comment' ? monthlyFeedback.comments + 1 : 
         feedbackType: feedbackType,
         messageUrl: `https://discord.com/channels/${guild.id}/${channel.id}`
     });
+}
+
+async function handleFeedbackInvalidSlashCommand(interaction) {
+    console.log(`Processing /feedback_invalid command for ${interaction.user.displayName}`);
+    
+    const validator = interaction.user;
+    const channel = interaction.channel;
+    const guild = interaction.guild;
+    const feedbackGiver = interaction.options.getUser('user');
+    const feedbackType = interaction.options.getString('type');
+    
+    // Check if this is a thread and validator is the thread owner
+    if (!channel.isThread()) {
+        const embed = new EmbedBuilder()
+            .setTitle('Must Be Used in a Thread ☝️')
+            .setDescription('This command can only be used in threads where you are the creator.')
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    if (channel.ownerId !== validator.id) {
+        const embed = new EmbedBuilder()
+            .setTitle('Thread Owner Only ☝️')
+            .setDescription('Only the thread creator can invalidate feedback.')
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    try {
+        // Find the most recent validated feedback of this type from this user in this thread
+        const feedbackToInvalidate = await global.db.getRow(`
+            SELECT id, validated_at FROM validated_feedback 
+            WHERE user_id = ? AND thread_id = ? AND feedback_type = ?
+            ORDER BY validated_at DESC 
+            LIMIT 1
+        `, [feedbackGiver.id, channel.id, feedbackType]);
+        
+        if (!feedbackToInvalidate) {
+            const typeDisplay = feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
+            const embed = new EmbedBuilder()
+                .setTitle('No Matching Feedback Found ☝️')
+                .setDescription(`${feedbackGiver.displayName} has no validated **${typeDisplay}** feedback in this thread to invalidate.`)
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        }
+        
+        // Get current counts before invalidation
+        const currentValidated = await getUserValidatedFeedbacksByType(feedbackGiver.id);
+        const currentMonthly = await getUserMonthlyFeedbackByType(feedbackGiver.id);
+        
+        // Remove the validated feedback
+        await global.db.runSingle(
+            'DELETE FROM validated_feedback WHERE id = ?',
+            [feedbackToInvalidate.id]
+        );
+        
+        // Update total feedback count
+        const userData = await getUserData(feedbackGiver.id);
+        await updateUserData(feedbackGiver.id, {
+            total_feedback_all_time: Math.max(0, userData.total_feedback_all_time - 1)
+        });
+        
+        // Update monthly feedback count
+        const monthKey = global.db.getCurrentMonthKey();
+        const newDocs = feedbackType === 'doc' ? Math.max(0, currentMonthly.docs - 1) : currentMonthly.docs;
+        const newComments = feedbackType === 'comment' ? Math.max(0, currentMonthly.comments - 1) : currentMonthly.comments;
+        
+        await global.db.runSingle(
+            'UPDATE monthly_feedback SET docs = ?, comments = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND month_key = ?',
+            [newDocs, newComments, feedbackGiver.id, monthKey]
+        );
+        
+        // Calculate new totals
+        const newValidatedTotal = (currentValidated.docs + currentValidated.comments) - 1;
+        const meetingRequirement = checkMonthlyRequirementMet(newDocs, newComments);
+        
+        const typeDisplay = feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
+        
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Feedback Invalidated!')
+            .setDescription(`Successfully invalidated **${feedbackGiver.displayName}**'s ${typeDisplay} feedback.`)
+            .addFields(
+                { name: 'Updated Monthly Stats', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
+                { name: 'Monthly Requirement', value: meetingRequirement ? '✅ Still met' : '❌ No longer met', inline: true },
+                { name: 'Total Validated', value: `${newValidatedTotal} feedbacks`, inline: true }
+            )
+            .setColor(0xFF6B6B);
+        
+        await replyTemporary(interaction, { embeds: [embed], ephemeral: true }, 8000);
+        
+        // Send notification to feedback giver
+        try {
+            const dmChannel = await feedbackGiver.createDM();
+            const dmEmbed = new EmbedBuilder()
+                .setTitle('⚠️ Your Feedback Was Invalidated')
+                .setDescription(`Your **${typeDisplay}** feedback in **${channel.name}** has been invalidated by the thread owner.`)
+                .addFields(
+                    { name: 'Updated Monthly Progress', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
+                    { name: 'Requirement Status', value: meetingRequirement ? '✅ Monthly requirement still met' : `❌ Monthly requirement no longer met`, inline: false },
+                    { name: 'Total Validated', value: `${newValidatedTotal} feedbacks`, inline: true }
+                )
+                .setColor(0xFF6B6B);
+            
+            await dmChannel.send({ embeds: [dmEmbed] });
+        } catch (dmError) {
+            console.log('Could not send DM to feedback giver about invalidation:', dmError.message);
+        }
+        
+        console.log(`Feedback invalidated: ${feedbackGiver.displayName}'s ${feedbackType} feedback in ${channel.name}`);
+        
+    } catch (error) {
+        console.error('Error invalidating feedback:', error);
+        
+        const errorEmbed = new EmbedBuilder()
+            .setTitle('Error Invalidating Feedback ☝️')
+            .setDescription('There was an error invalidating the feedback. Please try again.')
+            .setColor(0xFF6B6B);
+        
+        await replyTemporary(interaction, { embeds: [errorEmbed], ephemeral: true });
+    }
 }
 
 async function handleCitadelChannelSlashCommand(interaction) {
@@ -2184,7 +2346,7 @@ function createHelpEmbed(guild) {
             },
             { 
                 name: '👤 User Commands', 
-                value: '`/progress` - Check your progress and access levels\n`/feedback` - Log your feedback contribution\n`/feedback_valid` - Validate someone\'s feedback (thread owners)\n`/citadel_channel` - Create your own channel (Level 15 + validated)\n`/hall_of_fame` - View top contributors\n`/color_role` - Choose a unique color role (Level 15 + 15 validated feedbacks required)', 
+                value: '`/progress` - Check your progress and access levels\n`/feedback` - Log your feedback contribution\n`/feedback_valid` - Validate someone\'s feedback (thread owners)\n`/feedback_invalid` - Invalidate/remove validated feedback (thread owners)\n`/citadel_channel` - Create your own channel (Level 15 + validated)\n`/hall_of_fame` - View top contributors\n`/color_role` - Choose a unique color role (Level 15 + 15 validated feedbacks required)', 
                 inline: false 
             },
             { 
