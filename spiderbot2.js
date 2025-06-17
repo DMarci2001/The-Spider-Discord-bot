@@ -153,8 +153,8 @@ const MONTHLY_FEEDBACK_REQUIREMENT = {
 
 const ACCESS_REQUIREMENTS = {
     BOOKSHELF_DEMO: { level: 5, validatedFeedbacks: 0 },
-    BOOKSHELF_POST: { level: 10, validatedFeedbacks: 2, docFeedbacks: 2, commentFeedbacks: 4 }, // 2 docs OR 4 comments
-    CITADEL_CHANNEL: { level: 15, validatedFeedbacks: 5, docFeedbacks: 3, commentFeedbacks: 5 } // 3 docs OR 5 comments (additional requirement)
+    BOOKSHELF_POST: { level: 10, validatedFeedbacks: 2, docFeedbacks: 2, commentFeedbacks: 4 }, // 2 docs OR 4 comments OR 1 doc + 2 comments
+    CITADEL_CHANNEL: { level: 15, validatedFeedbacks: 5, docFeedbacks: 3, commentFeedbacks: 5 } // 3 docs OR 5 comments OR 2 docs + 2 comments
 };
 
 const BOOKSHELF_DEMO_LIMIT = 2; // Max posts in demo bookshelf
@@ -454,16 +454,19 @@ async function getUserValidatedFeedbacksByType(userId) {
 }
 
 function checkCitadelRequirementMet(docs, comments) {
-    // 3 docs OR 5 comments (additional requirement beyond bookshelf)
-    if (docs >= ACCESS_REQUIREMENTS.CITADEL_CHANNEL.docFeedbacks) return true;
-    if (comments >= ACCESS_REQUIREMENTS.CITADEL_CHANNEL.commentFeedbacks) return true;
+    // 3 docs OR 5 comments OR 2 docs + 2 comments (mixed case for higher tier)
+    if (docs >= 3) return true;
+    if (comments >= 5) return true;
+    if (docs >= 2 && comments >= 2) return true; // Mixed case for Citadel
+    if (docs >= 1 && comments >= 4) return true; // Mixed case for Citadel
     return false;
 }
 
 function checkBookshelfPostRequirementMet(docs, comments) {
-    // 2 docs OR 4 comments
-    if (docs >= ACCESS_REQUIREMENTS.BOOKSHELF_POST.docFeedbacks) return true;
-    if (comments >= ACCESS_REQUIREMENTS.BOOKSHELF_POST.commentFeedbacks) return true;
+    // 2 docs OR 4 comments OR 1 doc + 2 comments (same as monthly requirement)
+    if (docs >= 2) return true;
+    if (comments >= 4) return true;
+    if (docs >= 1 && comments >= 2) return true; // ADD THIS LINE!
     return false;
 }
 
@@ -1343,36 +1346,36 @@ client.on('threadCreate', async (thread) => {
             const canPost = checkBookshelfPostRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments);
             
             if (!hasAccessToBookshelfPosting(member) || !canPost) {
-                console.log(`User ${member.displayName} can access demo but cannot post yet`);
-                
-                // Send DM first, then delete thread
-                try {
-                    const dmChannel = await member.createDM();
-                    const embed = new EmbedBuilder()
-                        .setTitle('Cannot Post in Bookshelf Yet ☝️')
-                        .setDescription(`You can view the demo bookshelf, but need **Level 10** and **2 validated doc feedbacks OR 4 comment feedbacks** to post your own demo chapters.`)
-                        .addFields(
-                            { 
-                                name: 'Current Status', 
-                                value: `• Level 10+: ${hasAccessToBookshelfPosting(member) ? '✅' : '❌'}\n• Doc Feedbacks: ${validatedFeedbacks.docs}/2\n• Comment Feedbacks: ${validatedFeedbacks.comments}/4`, 
-                                inline: false 
-                            },
-                            { 
-                                name: 'How to Progress', 
-                                value: 'Give quality feedback in the bookshelf-discussion forum and Citadel channels, then ask thread owners to validate your feedback with `/feedback_valid`.', 
-                                inline: false 
-                            }
-                        )
-                        .setColor(0xFF9900);
-                    
-                    await dmChannel.send({ embeds: [embed] });
-                } catch (dmError) {
-                    console.log('Could not send DM to user:', dmError.message);
+    console.log(`User ${member.displayName} can access demo but cannot post yet`);
+    
+    // Send DM first, then delete thread
+    try {
+        const dmChannel = await member.createDM();
+        const embed = new EmbedBuilder()
+            .setTitle('Cannot Post in Bookshelf Yet ☝️')
+            .setDescription(`You can view the demo bookshelf, but need **Level 10** and **2 validated doc feedbacks OR 4 comment feedbacks OR 1 doc + 2 comment feedbacks** to post your own demo chapters.`)
+            .addFields(
+                { 
+                    name: 'Current Status', 
+                    value: `• Level 10+: ${hasAccessToBookshelfPosting(member) ? '✅' : '❌'}\n• Doc Feedbacks: ${validatedFeedbacks.docs}/2\n• Comment Feedbacks: ${validatedFeedbacks.comments}/4\n• Mixed Option: ${validatedFeedbacks.docs >= 1 && validatedFeedbacks.comments >= 2 ? '✅ 1 doc + 2 comments met' : `❌ Need 1 doc + 2 comments (currently ${validatedFeedbacks.docs} docs + ${validatedFeedbacks.comments} comments)`}`, 
+                    inline: false 
+                },
+                { 
+                    name: 'How to Progress', 
+                    value: 'Give quality feedback in the bookshelf-discussion forum and Citadel channels, then ask thread owners to validate your feedback with `/feedback_valid`.', 
+                    inline: false 
                 }
-                
-                await thread.delete();
-                return;
-            }
+            )
+            .setColor(0xFF9900);
+        
+        await dmChannel.send({ embeds: [embed] });
+    } catch (dmError) {
+        console.log('Could not send DM to user:', dmError.message);
+    }
+    
+    await thread.delete();
+    return;
+}
             
             // If they can post, send a welcome message to the thread
             const welcomeEmbed = new EmbedBuilder()
@@ -2010,23 +2013,23 @@ async function handleCitadelChannelSlashCommand(interaction) {
     const meetsCitadelRequirement = checkCitadelRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments);
 
     if (!meetsCitadelRequirement) {
-        const embed = new EmbedBuilder()
-            .setTitle('Insufficient Validated Feedbacks ☝️')
-            .setDescription(`You need **3 additional doc feedbacks** OR **5 additional comment feedbacks** to create your own Citadel channel.`)
-            .addFields({
-                name: 'Current Progress',
-                value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${validatedFeedbacks.docs}/3\n• **Comment Feedbacks**: ${validatedFeedbacks.comments}/5`,
-                inline: false
-            },
-            {
-                name: 'Requirement',
-                value: 'You need **3 additional validated doc feedbacks** OR **5 additional validated comment feedbacks** (not both)',
-                inline: false
-            })
-            .setColor(0xFF9900);
-        
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
+    const embed = new EmbedBuilder()
+        .setTitle('Insufficient Validated Feedbacks ☝️')
+        .setDescription(`You need **3 doc feedbacks** OR **5 comment feedbacks** OR **2 docs + 2 comments** to create your own Citadel channel.`)
+        .addFields({
+            name: 'Current Progress',
+            value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${validatedFeedbacks.docs}/3\n• **Comment Feedbacks**: ${validatedFeedbacks.comments}/5\n• **Mixed Option**: ${validatedFeedbacks.docs >= 2 && validatedFeedbacks.comments >= 2 ? '✅ 2 docs + 2 comments met' : `❌ Need 2 docs + 2 comments (currently ${validatedFeedbacks.docs} docs + ${validatedFeedbacks.comments} comments)`}`,
+            inline: false
+        },
+        {
+            name: 'Requirement Options',
+            value: '**Option 1:** 3 validated doc feedbacks\n**Option 2:** 5 validated comment feedbacks\n**Option 3:** 2 validated docs + 2 validated comments',
+            inline: false
+        })
+        .setColor(0xFF9900);
+    
+    return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+}
     
     // Check if user already has a Citadel channel
     const existingChannel = await global.db.getUserCitadelChannel(user.id);
