@@ -226,7 +226,7 @@ async function sendActivityNotification(guild, type, data) {
                 .setTimestamp();
         } else if (type === 'citadel_channel_created') {
             embed = new EmbedBuilder()
-                .setTitle('🏰 New Citadel Channel Created')
+                .setTitle('📚 New Citadel Channel Created')
                 .addFields(
                     { name: 'Channel', value: `<#${data.channelId}>`, inline: false },
                     { name: 'Owner', value: `<@${data.ownerId}>`, inline: true },
