@@ -498,42 +498,163 @@ function checkMonthlyRequirementMet(docs, comments) {
     return false;
 }
 
-async function createCitadelChannel(guild, userId, member) {
+async function createCitadelChannel(guild, userId, member, customName = null) {
+    // Find a debug channel to send diagnostic info
+    const debugChannel = guild.channels.cache.find(ch => 
+        ch.isTextBased() && (
+            ch.name.includes('bot-logs') || 
+            ch.name.includes('staff') || 
+            ch.name.includes('admin') ||
+            ch.name.includes('errors')
+        )
+    );
+
+    async function sendDebugMessage(message) {
+        if (debugChannel) {
+            try {
+                await debugChannel.send(`🏰 **Citadel Debug**: ${message}`);
+            } catch (e) {
+                // Fallback: can't even send debug messages
+            }
+        }
+    }
+
     try {
+        await sendDebugMessage(`Starting channel creation for **${member.displayName}** (${userId})`);
+        
         // Find Citadel category
-        const citadelCategory = guild.channels.cache.find(ch => 
-            ch.type === 4 && ch.name.toLowerCase().includes('citadel')
-        );
+        const allCategories = guild.channels.cache.filter(ch => ch.type === 4);
+        await sendDebugMessage(`Found ${allCategories.size} categories: ${allCategories.map(c => `"${c.name}"`).join(', ')}`);
+        
+        const citadelCategory = allCategories.find(ch => {
+            const normalizedName = ch.name
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^\w\s]/g, '')
+                .toLowerCase()
+                .trim();
+            
+            return normalizedName.includes('citadel') || 
+                   normalizedName.includes('the citadel') ||
+                   ch.name.toLowerCase().includes('citadel') ||
+                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+        });
 
         if (!citadelCategory) {
-            throw new Error('Citadel category not found');
+            const errorMsg = `❌ **CITADEL CATEGORY NOT FOUND**\n\nAvailable categories:\n${allCategories.map(c => `• "${c.name}" (ID: ${c.id})`).join('\n')}\n\n**Solution**: Create a category with "citadel" in the name.`;
+            await sendDebugMessage(errorMsg);
+            throw new Error('No Citadel category found. Please create a category containing "citadel" in the name.');
         }
 
-        // Create the user's channel
+        await sendDebugMessage(`✅ Found Citadel category: **"${citadelCategory.name}"** (ID: ${citadelCategory.id})`);
+
+        // Check bot permissions
+        const botMember = guild.members.me;
+        const requiredPermissions = [
+            'ManageChannels',
+            'ViewChannel', 
+            'SendMessages',
+            'EmbedLinks'
+        ];
+
+        const missingGuildPerms = requiredPermissions.filter(perm => 
+            !botMember.permissions.has(PermissionFlagsBits[perm])
+        );
+
+        if (missingGuildPerms.length > 0) {
+            const errorMsg = `❌ **BOT MISSING GUILD PERMISSIONS**\n\nMissing: ${missingGuildPerms.join(', ')}\n\n**Solution**: Grant the bot these permissions server-wide.`;
+            await sendDebugMessage(errorMsg);
+            throw new Error(`Bot missing permissions: ${missingGuildPerms.join(', ')}`);
+        }
+
+        // Check category permissions
+        const categoryPermissions = citadelCategory.permissionsFor(botMember);
+        const missingCategoryPerms = requiredPermissions.filter(perm => 
+            !categoryPermissions.has(PermissionFlagsBits[perm])
+        );
+
+        if (missingCategoryPerms.length > 0) {
+            const errorMsg = `❌ **BOT MISSING CATEGORY PERMISSIONS**\n\nMissing in "${citadelCategory.name}": ${missingCategoryPerms.join(', ')}\n\n**Solution**: Grant bot permissions in the Citadel category specifically.`;
+            await sendDebugMessage(errorMsg);
+            throw new Error(`Bot missing category permissions: ${missingCategoryPerms.join(', ')}`);
+        }
+
+        await sendDebugMessage('✅ Bot permissions verified');
+
+        // Generate channel name - use custom name if provided, otherwise fallback to display name
+        let channelName;
+        if (customName) {
+            // Sanitize the custom name
+            const sanitized = customName
+                .toLowerCase()
+                .replace(/[^a-z0-9\s-]/g, '') // Remove invalid characters
+                .replace(/\s+/g, '-') // Replace spaces with hyphens
+                .replace(/-+/g, '-') // Replace multiple hyphens with single
+                .replace(/^-|-$/g, ''); // Remove leading/trailing hyphens
+            
+            if (sanitized.length < 1) {
+                throw new Error('Channel name contains no valid characters. Please use letters, numbers, spaces, or hyphens.');
+            }
+            
+            channelName = `${sanitized}-chamber`;
+            await sendDebugMessage(`📝 Using custom channel name: **"${channelName}"** (from input: "${customName}")`);
+        } else {
+            // Fallback to display name
+            channelName = `${member.displayName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-chamber`;
+            await sendDebugMessage(`📝 Using fallback channel name: **"${channelName}"** (from display name)`);
+        }
+
+        // Discord channel name validation
+        if (channelName.length > 100) {
+            throw new Error('Channel name too long. Please use a shorter name (max 80 characters).');
+        }
+
+        const existingChannel = guild.channels.cache.find(ch => 
+            ch.name === channelName && ch.parentId === citadelCategory.id
+        );
+
+        if (existingChannel) {
+            const errorMsg = `❌ **CHANNEL NAME CONFLICT**\n\nChannel **"${channelName}"** already exists (ID: ${existingChannel.id})\n\n**Solution**: Choose a different name or contact staff to resolve the conflict.`;
+            await sendDebugMessage(errorMsg);
+            throw new Error(`Channel name "${channelName}" already exists. Please choose a different name.`);
+        }
+
+        await sendDebugMessage('✅ Channel name available, creating channel...');
+
+        // Create the channel
         const channel = await guild.channels.create({
-            name: `${member.displayName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-chamber`,
-            type: 0, // Text channel
+            name: channelName,
+            type: 0,
             parent: citadelCategory.id,
             topic: `${member.displayName}'s Literary Chamber`,
             permissionOverwrites: [
                 {
-                    id: guild.id, // @everyone
+                    id: guild.id,
                     allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
                     deny: [PermissionFlagsBits.SendMessages]
                 },
                 {
-                    id: userId, // Channel owner
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageThreads, PermissionFlagsBits.CreatePublicThreads]
+                    id: userId,
+                    allow: [
+                        PermissionFlagsBits.ViewChannel, 
+                        PermissionFlagsBits.SendMessages, 
+                        PermissionFlagsBits.ReadMessageHistory, 
+                        PermissionFlagsBits.ManageThreads, 
+                        PermissionFlagsBits.CreatePublicThreads
+                    ]
                 }
             ]
         });
 
-        // Store channel ownership in database
+        await sendDebugMessage(`✅ **CHANNEL CREATED SUCCESSFULLY**: ${channel} (ID: ${channel.id})`);
+
+        // Store in database
         await global.db.createCitadelChannel(userId, channel.id);
+        await sendDebugMessage('✅ Channel ownership stored in database');
 
-        console.log(`Created Citadel channel: ${channel.name} for ${member.displayName}`);
-
-        // Send welcome message to the new channel
+        // Send welcome message
         const welcomeEmbed = new EmbedBuilder()
             .setTitle(`Welcome to Your Literary Chamber, ${member.displayName}! ☝️`)
             .setDescription('Congratulations on achieving **Level 15** and providing sufficient validated feedbacks! This is your personal space in The Citadel.')
@@ -545,6 +666,7 @@ async function createCitadelChannel(guild, userId, member) {
             .setColor(0xFFD700);
 
         await channel.send({ embeds: [welcomeEmbed] });
+        await sendDebugMessage('✅ Welcome message sent to new channel');
 
         // Send activity notification
         const validatedCount = await getUserValidatedFeedbacks(userId);
@@ -554,10 +676,169 @@ async function createCitadelChannel(guild, userId, member) {
             validatedFeedbacks: validatedCount
         });
 
+        await sendDebugMessage(`✅ **CITADEL CHANNEL CREATION COMPLETE** for **${member.displayName}**`);
         return channel;
+
+    } catch (error) {
+        const fullErrorMsg = `❌ **CITADEL CHANNEL CREATION FAILED**\n\n**User**: ${member.displayName} (${userId})\n**Error**: ${error.message}\n**Stack**: \`\`\`${error.stack}\`\`\``;
+        await sendDebugMessage(fullErrorMsg);
+        
+        console.error('Citadel channel creation error:', error);
+        throw error;
+    }
+}
+
+// Updated slash command handler with better user feedback
+async function handleCitadelChannelSlashCommand(interaction) {
+    console.log(`Processing /citadel_channel command for ${interaction.user.displayName}`);
+    
+    const user = interaction.user;
+    const member = interaction.member;
+    const guild = interaction.guild;
+    const customName = interaction.options.getString('name');
+    
+    // Validate custom name input
+    if (customName) {
+        // Basic validation
+        if (customName.length < 1) {
+            const embed = new EmbedBuilder()
+                .setTitle('Invalid Channel Name ☝️')
+                .setDescription('Channel name cannot be empty.')
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        }
+
+        if (customName.length > 80) {
+            const embed = new EmbedBuilder()
+                .setTitle('Channel Name Too Long ☝️')
+                .setDescription('Channel name must be 80 characters or less (excluding "-chamber" suffix).')
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        }
+
+        // Check for completely invalid characters
+        const sanitized = customName.replace(/[^a-z0-9\s-]/gi, '');
+        if (sanitized.length < 1) {
+            const embed = new EmbedBuilder()
+                .setTitle('Invalid Channel Name ☝️')
+                .setDescription('Channel name must contain at least some letters, numbers, spaces, or hyphens.')
+                .addFields({
+                    name: 'Valid Characters',
+                    value: 'Letters (a-z), numbers (0-9), spaces, and hyphens (-)',
+                    inline: false
+                })
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        }
+    }
+    
+    // Check Level 15 requirement
+    if (!hasLevel15Role(member)) {
+        const embed = new EmbedBuilder()
+            .setTitle('Level 15 Required ☝️')
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    // Check validated feedback requirement
+    const validatedFeedbacks = await getUserValidatedFeedbacksByType(user.id);
+    const meetsCitadelRequirement = checkCitadelRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments);
+
+    if (!meetsCitadelRequirement) {
+        const embed = new EmbedBuilder()
+            .setTitle('Insufficient Validated Feedbacks ☝️')
+            .setDescription(`You need **3 doc feedbacks** OR **5 comment feedbacks** OR **2 docs + 2 comments** to create your own Citadel channel.`)
+            .addFields({
+                name: 'Current Progress',
+                value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${validatedFeedbacks.docs}/3\n• **Comment Feedbacks**: ${validatedFeedbacks.comments}/5\n• **Mixed Option**: ${validatedFeedbacks.docs >= 2 && validatedFeedbacks.comments >= 2 ? '✅ 2 docs + 2 comments met' : `❌ Need 2 docs + 2 comments (currently ${validatedFeedbacks.docs} docs + ${validatedFeedbacks.comments} comments)`}`,
+                inline: false
+            },
+            {
+                name: 'Requirement Options',
+                value: '**Option 1:** 3 validated doc feedbacks\n**Option 2:** 5 validated comment feedbacks\n**Option 3:** 2 validated docs + 2 validated comments',
+                inline: false
+            })
+            .setColor(0xFF9900);
+        
+        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+    }
+    
+    // Check if user already has a Citadel channel - WITH CLEANUP
+    const existingChannelId = await global.db.getUserCitadelChannel(user.id);
+    if (existingChannelId) {
+        // Check if the channel actually exists in Discord
+        const actualChannel = guild.channels.cache.get(existingChannelId);
+        
+        if (actualChannel) {
+            // Channel exists - user really does have one
+            const embed = new EmbedBuilder()
+                .setTitle('Channel Already Exists ☝️')
+                .setDescription(`You already have a Citadel channel: <#${existingChannelId}>`)
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
+        } else {
+            // Channel was deleted but database wasn't cleaned up - fix this automatically
+            await global.db.removeCitadelChannel(user.id);
+            
+            // Send debug message about cleanup
+            const debugChannel = guild.channels.cache.find(ch => 
+                ch.isTextBased() && (
+                    ch.name.includes('bot-logs') || 
+                    ch.name.includes('staff') || 
+                    ch.name.includes('admin') ||
+                    ch.name.includes('errors')
+                )
+            );
+            
+            if (debugChannel) {
+                try {
+                    await debugChannel.send(`🏰 **Citadel Cleanup**: Removed stale database record for **${member.displayName}** (channel ID ${existingChannelId} no longer exists)`);
+                } catch (e) {
+                    // Ignore if we can't send debug message
+                }
+            }
+            
+            // Continue with channel creation since the old one is gone
+        }
+    }
+    
+    await interaction.deferReply();
+    
+    try {
+        const channel = await createCitadelChannel(guild, user.id, member, customName);
+        
+        const totalValidated = validatedFeedbacks.docs + validatedFeedbacks.comments;
+        const embed = new EmbedBuilder()
+            .setTitle('🏰 Citadel Channel Created!')
+            .setDescription(`Congratulations! Your personal literary chamber has been created: ${channel}`)
+            .addFields(
+                { name: 'Channel Name', value: `**${channel.name}**`, inline: true },
+                { name: 'Achievement Unlocked', value: `✅ **Level 15** + **${totalValidated} Validated Feedbacks**`, inline: false },
+                { name: 'Your New Powers', value: '• Post unlimited stories and chapters\n• Manage feedback threads\n• Full creative control of your space', inline: false },
+                { name: 'Next Steps', value: 'Visit your new channel to start posting your literary works!', inline: false }
+            )
+            .setColor(0xFFD700);
+        
+        await interaction.editReply({ embeds: [embed] });
+        
     } catch (error) {
         console.error('Error creating Citadel channel:', error);
-        throw error;
+        
+        const errorEmbed = new EmbedBuilder()
+            .setTitle('Channel Creation Failed ☝️')
+            .setDescription('There was an error creating your Citadel channel.')
+            .addFields(
+                { name: 'Error Details', value: `\`\`\`${error.message}\`\`\``, inline: false },
+                { name: 'Next Steps', value: 'Try a different channel name, or check the staff/bot-logs channel for detailed diagnostics.', inline: false }
+            )
+            .setColor(0xFF6B6B);
+        
+        await interaction.editReply({ embeds: [errorEmbed] });
     }
 }
 
@@ -1146,8 +1427,14 @@ const commands = [
     .setDescription('Choose your color role (15 total validated feedbacks required)'),
     
     new SlashCommandBuilder()
-        .setName('citadel_channel')
-        .setDescription('Create your personal channel in The Citadel (Level 15 + validated feedbacks required)'),
+    .setName('citadel_channel')
+    .setDescription('Create your personal channel in The Citadel (Level 15 + validated feedbacks required)')
+    .addStringOption(option => 
+        option.setName('name')
+            .setDescription('Your channel name (will have "-chamber" added automatically)')
+            .setRequired(true)
+            .setMaxLength(80) // Leave room for "-chamber"
+    ),
     
     new SlashCommandBuilder()
         .setName('hall_of_fame')
@@ -1997,92 +2284,6 @@ async function handleFeedbackInvalidSlashCommand(interaction) {
     }
 }
 
-async function handleCitadelChannelSlashCommand(interaction) {
-    console.log(`Processing /citadel_channel command for ${interaction.user.displayName}`);
-    
-    const user = interaction.user;
-    const member = interaction.member;
-    const guild = interaction.guild;
-    
-    // Check Level 15 requirement
-    if (!hasLevel15Role(member)) {
-        const embed = new EmbedBuilder()
-            .setTitle('Level 15 Required ☝️')
-            .setDescription('You must reach **Level 15** to create your own Citadel channel.')
-            .addFields({
-                name: 'Current Requirement',
-                value: `• **Level 15**: ${hasLevel15Role(member) ? '✅' : '❌'}`,
-                inline: false
-            })
-            .setColor(0xFF9900);
-        
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
-    
-    // Check validated feedback requirement
-    const validatedFeedbacks = await getUserValidatedFeedbacksByType(user.id);
-    const meetsCitadelRequirement = checkCitadelRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments);
-
-    if (!meetsCitadelRequirement) {
-    const embed = new EmbedBuilder()
-        .setTitle('Insufficient Validated Feedbacks ☝️')
-        .setDescription(`You need **3 doc feedbacks** OR **5 comment feedbacks** OR **2 docs + 2 comments** to create your own Citadel channel.`)
-        .addFields({
-            name: 'Current Progress',
-            value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${validatedFeedbacks.docs}/3\n• **Comment Feedbacks**: ${validatedFeedbacks.comments}/5\n• **Mixed Option**: ${validatedFeedbacks.docs >= 2 && validatedFeedbacks.comments >= 2 ? '✅ 2 docs + 2 comments met' : `❌ Need 2 docs + 2 comments (currently ${validatedFeedbacks.docs} docs + ${validatedFeedbacks.comments} comments)`}`,
-            inline: false
-        },
-        {
-            name: 'Requirement Options',
-            value: '**Option 1:** 3 validated doc feedbacks\n**Option 2:** 5 validated comment feedbacks\n**Option 3:** 2 validated docs + 2 validated comments',
-            inline: false
-        })
-        .setColor(0xFF9900);
-    
-    return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-}
-    
-    // Check if user already has a Citadel channel
-    const existingChannel = await global.db.getUserCitadelChannel(user.id);
-    if (existingChannel) {
-        const embed = new EmbedBuilder()
-            .setTitle('Channel Already Exists ☝️')
-            .setDescription(`You already have a Citadel channel: <#${existingChannel}>`)
-            .setColor(0xFF9900);
-        
-        return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
-    }
-    
-    await interaction.deferReply();
-    
-    try {
-        const channel = await createCitadelChannel(guild, user.id, member);
-        
-        const totalValidated = validatedFeedbacks.docs + validatedFeedbacks.comments;
-        const embed = new EmbedBuilder()
-            .setTitle('🏰 Citadel Channel Created!')
-            .setDescription(`Congratulations! Your personal literary chamber has been created: ${channel}`)
-            .addFields(
-                { name: 'Achievement Unlocked', value: `✅ **Level 15** + **${totalValidated} Validated Feedbacks**`, inline: false },
-                { name: 'Your New Powers', value: '• Post unlimited stories and chapters\n• Manage feedback threads\n• Full creative control of your space', inline: false },
-                { name: 'Next Steps', value: 'Visit your new channel to start posting your literary works!', inline: false }
-            )
-            .setColor(0xFFD700);
-        
-        await interaction.editReply({ embeds: [embed] });
-        
-    } catch (error) {
-        console.error('Error creating Citadel channel:', error);
-        
-        const errorEmbed = new EmbedBuilder()
-            .setTitle('Channel Creation Failed ☝️')
-            .setDescription('There was an error creating your Citadel channel. Please contact staff for assistance.')
-            .setColor(0xFF6B6B);
-        
-        await interaction.editReply({ embeds: [errorEmbed] });
-    }
-}
-
 // ===== PROGRESS COMMANDS =====
 async function handleBalanceCommand(message) {
     const user = message.mentions.users.first() || message.author;
@@ -2355,7 +2556,7 @@ function createHelpEmbed(guild) {
             },
             { 
                 name: '🔓 Access Levels', 
-                value: `• **${roles.level5}**: Demo bookshelf access (view only)\n• **${roles.level10}** + 2 Google Doc or 4 comment feedbacks: Post 2 demo chapters\n• **${roles.level15}**+ 3 docs OR 5 comments: Own Citadel channel`, 
+                value: `• **${roles.level5}**: Demo bookshelf access (view only)\n• **${roles.level10}** + 2 Google Doc or 4 comment feedbacks: Post 2 demo chapters\n• **${roles.level15}**+ 3 docs OR 5 comments: Own Citadel channel(you must use your username as the channel name)`, 
                 inline: false 
             },
             { 
@@ -3166,7 +3367,7 @@ async function postServerGuide(channel) {
             },
             {
                 name: '📚 The Citadel',
-                value: `**${roles.level5}** required for all feedback activities:\n${channels.bookshelfDiscussion} - Give thorough critique and use \`/feedback\` to log contributions\n${channels.bookshelf} - Demo area for **${roles.level10}** members with 2 validated feedbacks (2 posts max)\n• Personal channels for **${roles.level15}** members with 3+ additional validated feedbacks`,
+                value: `**${roles.level5}** required for all feedback activities:\n${channels.bookshelfDiscussion} - Give thorough critique and use \`/feedback\` to log contributions\n${channels.bookshelf} - Demo area for **${roles.level10}** members with 2 validated feedbacks (2 posts max)\n• Personal channels**(NAMED AFTER OWN USERNAME)** for **${roles.level15}** members with 3+ additional validated feedbacks`,
                 inline: false
             },
             {
