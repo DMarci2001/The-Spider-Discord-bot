@@ -754,7 +754,7 @@ async function handleCitadelChannelSlashCommand(interaction) {
             .setDescription(`You need **3 doc feedbacks** OR **5 comment feedbacks** OR **2 docs + 2 comments** to create your own Citadel channel.`)
             .addFields({
                 name: 'Current Progress',
-                value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${validatedFeedbacks.docs}/3\n• **Comment Feedbacks**: ${validatedFeedbacks.comments}/5\n• **Mixed Option**: ${validatedFeedbacks.docs >= 2 && validatedFeedbacks.comments >= 2 ? '✅ 2 docs + 2 comments met' : `❌ Need 2 docs + 2 comments (currently ${validatedFeedbacks.docs} docs + ${validatedFeedbacks.comments} comments)`}`,
+                value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${validatedFeedbacks.docs}/3\n• **Comment Feedbacks**: ${validatedFeedbacks.comments}/5\n• **Mixed Option**: ${validatedFeedbacks.docs >= 2 && validatedFeedbacks.comments >= 2 ? '✅ 2 docs + 2 comments met' : `❌ Docs: ${validatedFeedbacks.docs}/2 | Comments: ${validatedFeedbacks.comments}/2`}`,
                 inline: false
             },
             {
