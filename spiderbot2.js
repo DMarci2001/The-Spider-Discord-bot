@@ -2038,20 +2038,73 @@ async function handleFeedbackValidSlashCommand(interaction) {
     const feedbackGiver = interaction.options.getUser('user');
     const feedbackType = interaction.options.getString('type');
     
-    // Check if this is a thread and validator is the thread owner
+    // Check if this is a thread
     if (!channel.isThread()) {
         const embed = new EmbedBuilder()
             .setTitle('Must Be Used in a Thread ☝️')
-            .setDescription('This command can only be used in threads where you are the creator.')
+            .setDescription('This command can only be used in threads.')
             .setColor(0xFF9900);
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    if (channel.ownerId !== validator.id) {
+    // ENHANCED PERMISSION CHECK: Thread owner OR Citadel channel owner
+    let hasPermission = false;
+    let permissionType = '';
+    
+    // Check if user is the thread creator
+    if (channel.ownerId === validator.id) {
+        hasPermission = true;
+        permissionType = 'thread owner';
+    }
+    // Check if this is a Citadel channel thread and user owns the Citadel channel
+    else if (channel.parent && channel.parent.type === 0) {
+        // Check if parent channel is in a Citadel category and user owns it
+        function normalizeText(text) {
+            return text
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^\w\s]/g, '')
+                .toLowerCase()
+                .trim();
+        }
+        
+        const citadelCategories = channel.guild.channels.cache.filter(ch => {
+            if (ch.type !== 4) return false;
+            
+            const normalizedName = normalizeText(ch.name);
+            return normalizedName.includes('citadel') || 
+                   normalizedName.includes('the citadel') ||
+                   ch.name.toLowerCase().includes('citadel') ||
+                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+        });
+        
+        // Check if this thread's parent channel is in a Citadel category
+        const isInCitadel = citadelCategories.some(category => 
+            channel.parent.parentId === category.id
+        );
+        
+        if (isInCitadel) {
+            // Check if the validator owns this Citadel channel
+            const userCitadelChannel = await global.db.getUserCitadelChannel(validator.id);
+            if (userCitadelChannel === channel.parent.id) {
+                hasPermission = true;
+                permissionType = 'Citadel channel owner';
+            }
+        }
+    }
+    
+    if (!hasPermission) {
         const embed = new EmbedBuilder()
-            .setTitle('Thread Owner Only ☝️')
-            .setDescription('Only the thread creator can validate feedback.')
+            .setTitle('Insufficient Permissions ☝️')
+            .setDescription('You can only validate feedback in:')
+            .addFields({
+                name: 'Permitted Actions',
+                value: '• Threads you created\n• Threads in your own Citadel channel',
+                inline: false
+            })
             .setColor(0xFF9900);
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -2083,82 +2136,83 @@ async function handleFeedbackValidSlashCommand(interaction) {
     }
     
     // Get the current monthly feedback count BEFORE adding the new one
-const monthlyFeedback = await global.db.getUserMonthlyFeedbackByType(feedbackGiver.id);
+    const monthlyFeedback = await global.db.getUserMonthlyFeedbackByType(feedbackGiver.id);
 
-// Add validated feedback to database (this will auto-increment monthly counts)
-await addValidatedFeedback(feedbackGiver.id, feedbackType, validator.id, channel.id);
+    // Add validated feedback to database (this will auto-increment monthly counts)
+    await addValidatedFeedback(feedbackGiver.id, feedbackType, validator.id, channel.id);
 
-// Remove pending feedback
-await removePendingFeedback(feedbackGiver.id, channel.id);
+    // Remove pending feedback
+    await removePendingFeedback(feedbackGiver.id, channel.id);
 
-// Calculate what the NEW counts should be (current + 1)
-const newDocs = feedbackType === 'doc' ? monthlyFeedback.docs + 1 : monthlyFeedback.docs;
-const newComments = feedbackType === 'comment' ? monthlyFeedback.comments + 1 : monthlyFeedback.comments;
-    
-    // Check if they now meet monthly requirements
-    const meetingRequirement = checkMonthlyRequirementMet(newDocs, newComments);
-    const validatedCount = await getUserValidatedFeedbacks(feedbackGiver.id);
-    
-    // Check if they've unlocked new access levels
-    let unlockedAccess = '';
-    const member = await guild.members.fetch(feedbackGiver.id);
-    
-    if (hasLevel15Role(member) && checkCitadelRequirementMet(newDocs, newComments)) {
-        // Check if they already have a citadel channel
-        const existingChannel = await global.db.getUserCitadelChannel(feedbackGiver.id);
-        if (!existingChannel) {
-            unlockedAccess = '\n🏰 **NEW ACCESS UNLOCKED:** You can now create your own Citadel channel with `/citadel_channel`!';
+    // Calculate what the NEW counts should be (current + 1)
+    const newDocs = feedbackType === 'doc' ? monthlyFeedback.docs + 1 : monthlyFeedback.docs;
+    const newComments = feedbackType === 'comment' ? monthlyFeedback.comments + 1 : monthlyFeedback.comments;
+        
+        // Check if they now meet monthly requirements
+        const meetingRequirement = checkMonthlyRequirementMet(newDocs, newComments);
+        const validatedCount = await getUserValidatedFeedbacks(feedbackGiver.id);
+        
+        // Check if they've unlocked new access levels
+        let unlockedAccess = '';
+        const member = await guild.members.fetch(feedbackGiver.id);
+        
+        if (hasLevel15Role(member) && checkCitadelRequirementMet(newDocs, newComments)) {
+            // Check if they already have a citadel channel
+            const existingChannel = await global.db.getUserCitadelChannel(feedbackGiver.id);
+            if (!existingChannel) {
+                unlockedAccess = '\n🏰 **NEW ACCESS UNLOCKED:** You can now create your own Citadel channel with `/citadel_channel`!';
+            }
+        } else if (hasLevel10Role(member) && checkBookshelfPostRequirementMet(newDocs, newComments)) {
+            unlockedAccess = '\n📚 **NEW ACCESS UNLOCKED:** You can now post demo chapters in the bookshelf!';
         }
-    } else if (hasLevel10Role(member) && checkBookshelfPostRequirementMet(newDocs, newComments)) {
-        unlockedAccess = '\n📚 **NEW ACCESS UNLOCKED:** You can now post demo chapters in the bookshelf!';
-    }
-    
-    const embed = new EmbedBuilder()
-        .setTitle('✅ Feedback Validated!')
-        .setDescription(`Successfully validated **${feedbackGiver.displayName}**'s ${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'} feedback.`)
-        .addFields(
-            { name: 'Updated Stats', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
-            { name: 'Monthly Requirement', value: meetingRequirement ? '✅ Met' : '❌ Not yet met', inline: true },
-            { name: 'Total Validated', value: `${validatedCount} feedbacks`, inline: true }
-        )
-        .setColor(0x00FF00);
-    
-    if (unlockedAccess) {
-        embed.addFields({ name: 'Achievement Unlocked!', value: unlockedAccess.trim(), inline: false });
-    }
-    
-    await replyTemporary(interaction, { embeds: [embed], ephemeral: true }, 8000);
-    
-    // Send notification to feedback giver
-    try {
-        const dmChannel = await feedbackGiver.createDM();
-        const dmEmbed = new EmbedBuilder()
-            .setTitle('✅ Your Feedback Was Validated!')
-            .setDescription(`Your **${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}** feedback in **${channel.name}** has been validated by ${validator.displayName}.`)
+        
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Feedback Validated!')
+            .setDescription(`Successfully validated **${feedbackGiver.displayName}**'s ${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'} feedback.`)
             .addFields(
-                { name: 'Monthly Progress', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
-                { name: 'Requirement Status', value: meetingRequirement ? '✅ Monthly requirement met!' : `❌ Need: 2 docs OR 4 comments OR 1 doc + 2 comments`, inline: false },
+                { name: 'Authority', value: `Validated by ${permissionType}`, inline: false },
+                { name: 'Updated Stats', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
+                { name: 'Monthly Requirement', value: meetingRequirement ? '✅ Met' : '❌ Not yet met', inline: true },
                 { name: 'Total Validated', value: `${validatedCount} feedbacks`, inline: true }
             )
             .setColor(0x00FF00);
         
         if (unlockedAccess) {
-            dmEmbed.addFields({ name: 'New Access!', value: unlockedAccess.trim(), inline: false });
+            embed.addFields({ name: 'Achievement Unlocked!', value: unlockedAccess.trim(), inline: false });
         }
         
-        await dmChannel.send({ embeds: [dmEmbed] });
-    } catch (dmError) {
-        console.log('Could not send DM to feedback giver:', dmError.message);
-    }
-    
-    // Send activity notification
-    await sendActivityNotification(guild, 'feedback_validated', {
-        thread: channel,
-        validatorId: validator.id,
-        feedbackGiverId: feedbackGiver.id,
-        feedbackType: feedbackType,
-        messageUrl: `https://discord.com/channels/${guild.id}/${channel.id}`
-    });
+        await replyTemporary(interaction, { embeds: [embed], ephemeral: true }, 8000);
+        
+        // Send notification to feedback giver
+        try {
+            const dmChannel = await feedbackGiver.createDM();
+            const dmEmbed = new EmbedBuilder()
+                .setTitle('✅ Your Feedback Was Validated!')
+                .setDescription(`Your **${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}** feedback in **${channel.name}** has been validated by the ${permissionType}.`)
+                .addFields(
+                    { name: 'Monthly Progress', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
+                    { name: 'Requirement Status', value: meetingRequirement ? '✅ Monthly requirement met!' : `❌ Need: 2 docs OR 4 comments OR 1 doc + 2 comments`, inline: false },
+                    { name: 'Total Validated', value: `${validatedCount} feedbacks`, inline: true }
+                )
+                .setColor(0x00FF00);
+            
+            if (unlockedAccess) {
+                dmEmbed.addFields({ name: 'New Access!', value: unlockedAccess.trim(), inline: false });
+            }
+            
+            await dmChannel.send({ embeds: [dmEmbed] });
+        } catch (dmError) {
+            console.log('Could not send DM to feedback giver:', dmError.message);
+        }
+        
+        // Send activity notification
+        await sendActivityNotification(guild, 'feedback_validated', {
+            thread: channel,
+            validatorId: validator.id,
+            feedbackGiverId: feedbackGiver.id,
+            feedbackType: feedbackType,
+            messageUrl: `https://discord.com/channels/${guild.id}/${channel.id}`
+        });
 }
 
 async function handleFeedbackInvalidSlashCommand(interaction) {
@@ -2170,20 +2224,73 @@ async function handleFeedbackInvalidSlashCommand(interaction) {
     const feedbackGiver = interaction.options.getUser('user');
     const feedbackType = interaction.options.getString('type');
     
-    // Check if this is a thread and validator is the thread owner
+    // Check if this is a thread
     if (!channel.isThread()) {
         const embed = new EmbedBuilder()
             .setTitle('Must Be Used in a Thread ☝️')
-            .setDescription('This command can only be used in threads where you are the creator.')
+            .setDescription('This command can only be used in threads.')
             .setColor(0xFF9900);
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    if (channel.ownerId !== validator.id) {
+    // ENHANCED PERMISSION CHECK: Thread owner OR Citadel channel owner
+    let hasPermission = false;
+    let permissionType = '';
+    
+    // Check if user is the thread creator
+    if (channel.ownerId === validator.id) {
+        hasPermission = true;
+        permissionType = 'thread owner';
+    }
+    // Check if this is a Citadel channel thread and user owns the Citadel channel
+    else if (channel.parent && channel.parent.type === 0) {
+        // Check if parent channel is in a Citadel category and user owns it
+        function normalizeText(text) {
+            return text
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^\w\s]/g, '')
+                .toLowerCase()
+                .trim();
+        }
+        
+        const citadelCategories = channel.guild.channels.cache.filter(ch => {
+            if (ch.type !== 4) return false;
+            
+            const normalizedName = normalizeText(ch.name);
+            return normalizedName.includes('citadel') || 
+                   normalizedName.includes('the citadel') ||
+                   ch.name.toLowerCase().includes('citadel') ||
+                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+        });
+        
+        // Check if this thread's parent channel is in a Citadel category
+        const isInCitadel = citadelCategories.some(category => 
+            channel.parent.parentId === category.id
+        );
+        
+        if (isInCitadel) {
+            // Check if the validator owns this Citadel channel
+            const userCitadelChannel = await global.db.getUserCitadelChannel(validator.id);
+            if (userCitadelChannel === channel.parent.id) {
+                hasPermission = true;
+                permissionType = 'Citadel channel owner';
+            }
+        }
+    }
+    
+    if (!hasPermission) {
         const embed = new EmbedBuilder()
-            .setTitle('Thread Owner Only ☝️')
-            .setDescription('Only the thread creator can invalidate feedback.')
+            .setTitle('Insufficient Permissions ☝️')
+            .setDescription('You can only invalidate feedback in:')
+            .addFields({
+                name: 'Permitted Actions',
+                value: '• Threads you created\n• Threads in your own Citadel channel',
+                inline: false
+            })
             .setColor(0xFF9900);
         
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -2201,8 +2308,7 @@ async function handleFeedbackInvalidSlashCommand(interaction) {
         if (!feedbackToInvalidate) {
             const typeDisplay = feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
             const embed = new EmbedBuilder()
-                .setTitle('No Matching Feedback Found ☝️')
-                .setDescription(`${feedbackGiver.displayName} has no validated **${typeDisplay}** feedback in this thread to invalidate.`)
+                .setTitle('No Pending Feedback Found ☝️')
                 .setColor(0xFF9900);
             
             return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
@@ -2244,6 +2350,7 @@ async function handleFeedbackInvalidSlashCommand(interaction) {
             .setTitle('✅ Feedback Invalidated!')
             .setDescription(`Successfully invalidated **${feedbackGiver.displayName}**'s ${typeDisplay} feedback.`)
             .addFields(
+                { name: 'Authority', value: `Invalidated by ${permissionType}`, inline: false },
                 { name: 'Updated Monthly Stats', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
                 { name: 'Monthly Requirement', value: meetingRequirement ? '✅ Still met' : '❌ No longer met', inline: true },
                 { name: 'Total Validated', value: `${newValidatedTotal} feedbacks`, inline: true }
@@ -2257,7 +2364,7 @@ async function handleFeedbackInvalidSlashCommand(interaction) {
             const dmChannel = await feedbackGiver.createDM();
             const dmEmbed = new EmbedBuilder()
                 .setTitle('⚠️ Your Feedback Was Invalidated')
-                .setDescription(`Your **${typeDisplay}** feedback in **${channel.name}** has been invalidated by the thread owner.`)
+                .setDescription(`Your **${typeDisplay}** feedback in **${channel.name}** has been invalidated by the ${permissionType}.`)
                 .addFields(
                     { name: 'Updated Monthly Progress', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
                     { name: 'Requirement Status', value: meetingRequirement ? '✅ Monthly requirement still met' : `❌ Monthly requirement no longer met`, inline: false },
@@ -2270,7 +2377,7 @@ async function handleFeedbackInvalidSlashCommand(interaction) {
             console.log('Could not send DM to feedback giver about invalidation:', dmError.message);
         }
         
-        console.log(`Feedback invalidated: ${feedbackGiver.displayName}'s ${feedbackType} feedback in ${channel.name}`);
+        console.log(`Feedback invalidated: ${feedbackGiver.displayName}'s ${feedbackType} feedback in ${channel.name} by ${permissionType}`);
         
     } catch (error) {
         console.error('Error invalidating feedback:', error);
