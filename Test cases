@@ -1,33 +1,373 @@
-Version 4:
+# Discord Bot Testing Strategy
 
-1. User flow: Get welcomed, give feedback with /feedback, use all commands to see if they work, buy shelf, create a bookshelf thread,
-post a chapter with /post_chapter, see if the credit amount is reduced, use /balance.
-2. See if the account is properly reset when a user is kicked or leaves
-3. See if user can buy bookshelf without sufficient funds
-4. See if user can create a bookshelf thread without the reader role
-5. See if /feedback can be used in anywhere but the designated forums
-6. See if user can use post_chapter if they are not in their own thread,
-7. See if user can use post_chapter if they have insufficient funds
-8. See if when the user uses /post_chapter their credit amount is diminished by one, using the /balance command.
+## 🎯 Test Setup Requirements
 
-from Version 4 passed:
-3, 4, 5, 6, 8
-still needs work:
-1, 2, 7
+### Test Server Setup
+- **Create a dedicated test server** with all channels/categories matching production
+- **Set up test roles**: Level 5, Level 10, Level 15, reader, Shelf Owner
+- **Create test accounts** at different permission levels:
+  - New user (no roles)
+  - Level 5 user
+  - Level 10 user  
+  - Level 15 user
+  - Staff member
+  - Bot admin
 
-Version 5:
+### Test Data Preparation
+- **Fresh database** for clean testing
+- **Pre-populate test users** with different credit/feedback counts
+- **Create test threads** in bookshelf-discussion and Citadel channels
 
-1. See if user is welcomed properly
-2. See if the account is properly reset when a user is kicked or leaves
-3. See if the balance message is logical for a member who already has the reader role
-4. See if the feedback_remove command works properly
+---
 
-from Version 4 passed:
-2, 3, 4, 5, 6, 7, 8
-still needs work:
-1
-from Version 5 passed:
-2, 3
-still needs work:
-1, 4
+## 📋 Core User Flow Testing
 
+### 1. **New User Journey (Complete Flow)**
+
+#### Test Scenario: Brand new user joins server
+```
+✅ Actions to Test:
+1. User joins server → Welcome message appears
+2. User tries /feedback without Level 5 → Gets rejected
+3. User gains Level 5 role → Can now use /feedback
+4. User gives feedback in bookshelf-discussion
+5. User uses /feedback → Gets pending status
+6. Thread owner validates with /feedback_valid
+7. User checks /progress → Sees validated feedback
+8. User reaches monthly requirement
+9. User reaches Level 10 + enough feedbacks → Can post in bookshelf demo
+10. User reaches Level 15 + more feedbacks → Can create Citadel channel
+11. User gets 15 total feedbacks → Can buy color roles
+
+Expected Results:
+- Welcome message appears correctly
+- Permission checks work at each level
+- Credit accumulation works properly
+- Access levels unlock correctly
+```
+
+### 2. **Feedback System Testing**
+
+#### Happy Path: Feedback Logging & Validation
+```
+Test Cases:
+1. /feedback in bookshelf-discussion thread (not own thread)
+2. /feedback in Citadel channel thread
+3. /feedback_valid with correct user and type
+4. Multiple feedbacks in same thread
+5. Feedback in different threads by same user
+
+Expected Results:
+- Credits increase correctly
+- Monthly counts update
+- Database records created
+- Activity notifications sent
+```
+
+#### Edge Cases: Feedback System
+```
+❌ Error Conditions to Test:
+1. /feedback in wrong channel type
+2. /feedback in own thread
+3. /feedback without recent message
+4. /feedback on already logged message
+5. /feedback_valid by non-thread owner
+6. /feedback_valid with wrong type
+7. /feedback_valid for non-existent pending feedback
+8. /feedback_valid type mismatch
+
+Expected Results:
+- Appropriate error messages
+- No database corruption
+- Temporary messages delete correctly
+```
+
+### 3. **Access Level Testing**
+
+#### Bookshelf Demo Access
+```
+Test Progression:
+1. Level 5 + 0 feedbacks → Can view, cannot post
+2. Level 10 + 1 doc feedback → Can post demo chapters
+3. Level 10 + 4 comment feedbacks → Can post demo chapters
+4. Level 10 + 1 doc + 2 comments → Can post demo chapters
+5. Post limit testing (2 posts max)
+6. Attempting 3rd post → Gets blocked
+
+Expected Results:
+- Access granted at correct thresholds
+- Demo post limits enforced
+- Error messages clear and helpful
+```
+
+#### Citadel Channel Creation
+```
+Test Progression:
+1. Level 15 + 2 total feedbacks → Cannot create
+2. Level 15 + 3 doc feedbacks → Can create channel
+3. Level 15 + 5 comment feedbacks → Can create channel
+4. Already has channel → Cannot create second
+5. Channel permissions set correctly
+
+Expected Results:
+- Channels created with proper permissions
+- Activity notifications sent
+- Database records accurate
+```
+
+### 4. **Color Role System**
+
+#### Color Role Testing
+```
+Test Cases:
+1. Level 14 user tries to buy color → Rejected
+2. Level 15 + 14 feedbacks → Rejected  
+3. Level 15 + 15 feedbacks → Can purchase
+4. Buy same color twice → Rejected
+5. Buy different color → Replaces previous
+6. Role positioning (should be highest)
+
+Expected Results:
+- Level/feedback requirements enforced
+- Only one color role at a time
+- Role hierarchy correct
+- Database purchases updated
+```
+
+---
+
+## ⚠️ Edge Cases & Error Conditions
+
+### 1. **Database Edge Cases**
+
+#### Concurrent Operations
+```
+Test Scenarios:
+1. Two users /feedback at exact same time
+2. /feedback_valid while user uses /feedback elsewhere
+3. Staff command during user /progress check
+4. Database locked during operation
+
+Test Method:
+- Use multiple test accounts simultaneously
+- Monitor for database errors
+- Check data consistency after concurrent operations
+```
+
+#### Data Corruption Recovery
+```
+Test Scenarios:
+1. Orphaned pending feedback (thread deleted)
+2. User has validated feedback but no user record
+3. Monthly feedback without user record
+4. Invalid feedback types in database
+
+Expected Results:
+- Bot handles gracefully without crashing
+- Error messages informative
+- Data cleanup occurs properly
+```
+
+### 2. **Permission Edge Cases**
+
+#### Role Changes During Operations
+```
+Test Scenarios:
+1. User loses Level 5 role while feedback pending
+2. User gains Level 15 during color role purchase
+3. Staff permissions removed during admin command
+4. User leaves server with pending feedback
+
+Expected Results:
+- Operations complete or fail gracefully
+- No stuck states in database
+- Proper cleanup of user data
+```
+
+#### Channel Permission Changes
+```
+Test Scenarios:
+1. Bot loses permissions in feedback channels
+2. Channels deleted while user has pending feedback
+3. Category permissions changed affecting Citadel detection
+4. Forum channels converted to text channels
+
+Expected Results:
+- Bot detects permission issues
+- Helpful error messages
+- No crashes or infinite loops
+```
+
+### 3. **Monthly System Testing**
+
+#### Month Boundary Testing
+```
+Test Scenarios:
+1. Feedback logged at 11:59 PM on month end
+2. Pardon granted after month rollover
+3. Purge command during month transition
+4. User reaches requirement exactly at month end
+
+Test Method:
+- Temporarily modify month calculation for testing
+- Use future/past dates in database
+- Test the "adjusted date" logic (24hr shift)
+```
+
+#### Pardon System Edge Cases
+```
+Test Scenarios:
+1. Pardon user who already meets requirement
+2. Unpardon user who would be purged
+3. Late joiner detection edge cases
+4. User joins on exact week boundary
+
+Expected Results:
+- Pardon logic works correctly
+- Late joiner detection accurate
+- Staff can override all cases
+```
+
+---
+
+## 🛠️ Staff Command Testing
+
+### 1. **Feedback Management Commands**
+
+#### Staff Feedback Manipulation
+```
+Test Cases:
+1. /feedback_add with doc/comment types
+2. /feedback_remove beyond available amount
+3. /feedback_reset on user with Citadel channel
+4. Credits vs feedbacks vs monthly counts consistency
+
+Expected Results:
+- All counters update correctly
+- User access levels adjust appropriately
+- Cleanup occurs for resets
+```
+
+### 2. **Administrative Commands**
+
+#### Purge System Testing
+```
+Test Scenarios:
+1. /purge_list with various user states
+2. /manual_purge with protected staff
+3. Purge user with active threads
+4. Purge user with pending feedback
+
+Expected Results:
+- Correct users identified for purge
+- Staff members protected
+- User data cleaned up properly
+- Threads archived/locked
+```
+
+---
+
+## 🎮 Automated Testing Scenarios
+
+### Quick Smoke Tests (5 minutes)
+```bash
+# Basic functionality check
+1. New user /feedback → Should fail (no Level 5)
+2. Level 5 user /feedback in correct channel → Should work
+3. /progress command → Should show data
+4. Staff /stats command → Should show server stats
+5. /color_role without Level 15 → Should fail
+```
+
+### Comprehensive Flow Tests (30 minutes)
+```bash
+# Complete user progression
+1. Start with Level 5 user, 0 feedbacks
+2. Give feedback, validate, check progress
+3. Reach monthly requirement
+4. Progress to Level 10, unlock bookshelf demo
+5. Progress to Level 15, unlock Citadel
+6. Reach 15 feedbacks, unlock color roles
+7. Test staff commands throughout
+```
+
+### Stress Tests (As needed)
+```bash
+# High-load scenarios
+1. 20 users using /feedback simultaneously
+2. Rapid /feedback_valid validations
+3. Multiple /citadel_channel creation attempts
+4. Bulk staff operations (/feedback_add to many users)
+```
+
+---
+
+## 📊 Testing Checklist
+
+### Before Each Test Session
+- [ ] Fresh test database
+- [ ] All channels/roles set up correctly  
+- [ ] Bot permissions verified
+- [ ] Activity monitoring channel available
+- [ ] Test users at different levels ready
+
+### During Testing
+- [ ] Monitor console logs for errors
+- [ ] Check database consistency after major operations
+- [ ] Verify temporary messages delete properly
+- [ ] Test both slash commands and legacy commands (if applicable)
+- [ ] Confirm activity notifications appear
+
+### After Each Test Session
+- [ ] Check for memory leaks
+- [ ] Verify database integrity
+- [ ] Review error logs
+- [ ] Document any issues found
+- [ ] Test cleanup procedures
+
+---
+
+## 🚨 Critical Bugs to Watch For
+
+### High Priority Issues
+1. **Credit duplication** - User gets more credits than earned
+2. **Access bypassing** - User gains access without meeting requirements  
+3. **Database corruption** - Inconsistent data states
+4. **Permission escalation** - Users gaining unintended roles
+5. **Memory leaks** - Bot performance degrading over time
+
+### Medium Priority Issues
+1. **UI/UX problems** - Confusing error messages
+2. **Race conditions** - Concurrent operations causing issues
+3. **Edge case crashes** - Bot stops responding to commands
+4. **Notification failures** - Activity monitoring not working
+
+### Low Priority Issues
+1. **Minor text issues** - Typos or unclear messages
+2. **Performance slowdowns** - Commands taking too long
+3. **Cosmetic problems** - Embed formatting issues
+
+---
+
+## 📈 Success Metrics
+
+Your bot passes testing when:
+- ✅ All user progression flows work correctly
+- ✅ No users can bypass access requirements
+- ✅ Database remains consistent under load
+- ✅ Staff commands work reliably
+- ✅ Error messages are helpful and clear
+- ✅ Bot recovers gracefully from failures
+- ✅ Monthly system transitions smoothly
+- ✅ Permissions are enforced correctly
+
+## 🔧 Testing Tools
+
+### Recommended Test Setup
+1. **Multiple Discord accounts** (or use Discord's developer mode)
+2. **Database browser** (DB Browser for SQLite) to verify data
+3. **Bot console** open for real-time error monitoring
+4. **Test script** to quickly reset user states between tests
+5. **Spreadsheet** to track test results and edge cases found
+
+This comprehensive testing strategy should catch 95%+ of potential issues before going live! 🎯
