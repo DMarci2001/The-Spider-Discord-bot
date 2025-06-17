@@ -1120,17 +1120,28 @@ const commands = [
     
     // Staff commands (keeping existing ones)
     new SlashCommandBuilder()
-        .setName('feedback_add')
-        .setDescription('Add feedback credits to a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to add credits to').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of credits to add (default: 1)').setRequired(false)),
+    .setName('feedback_add')
+    .setDescription('Add validated feedbacks to a member (Staff only)')
+    .addUserOption(option => option.setName('user').setDescription('User to add feedbacks to').setRequired(true))
+    .addStringOption(option => option.setName('type').setDescription('Type of feedback to add').setRequired(true)
+        .addChoices(
+            { name: '📄 Full Google Doc Review', value: 'doc' },
+            { name: '💬 In-line Comments Only', value: 'comment' }
+        ))
+    .addIntegerOption(option => option.setName('amount').setDescription('Number of feedbacks to add (default: 1)').setRequired(false)),
     
     new SlashCommandBuilder()
-        .setName('feedback_remove')
-        .setDescription('Remove feedback credits from a member (Staff only)')
-        .addUserOption(option => option.setName('user').setDescription('User to remove credits from').setRequired(true))
-        .addIntegerOption(option => option.setName('amount').setDescription('Number of credits to remove (default: 1)').setRequired(false)),
-    
+    .setName('feedback_remove')
+    .setDescription('Remove validated feedbacks from a member (Staff only)')
+    .addUserOption(option => option.setName('user').setDescription('User to remove feedbacks from').setRequired(true))
+    .addStringOption(option => option.setName('type').setDescription('Type of feedback to remove').setRequired(true)
+        .addChoices(
+            { name: '📄 Full Google Doc Review', value: 'doc' },
+            { name: '💬 In-line Comments Only', value: 'comment' },
+            { name: '🔄 Any Type (Most Recent)', value: 'any' }
+        ))
+    .addIntegerOption(option => option.setName('amount').setDescription('Number of feedbacks to remove (default: 1)').setRequired(false)),
+
     new SlashCommandBuilder()
         .setName('feedback_reset')
         .setDescription('Reset member\'s entire record to zero (Staff only)')
@@ -1938,7 +1949,6 @@ async function createBalanceEmbed(user, member, guild) {
             { name: 'Validated Feedbacks', value: `📄 ${validatedFeedbacks.docs} docs | 💬 ${validatedFeedbacks.comments} comments`, inline: true },
             { name: 'Demo Posts Used', value: `📚 ${userRecord.demo_posts || 0}/${BOOKSHELF_DEMO_LIMIT}`, inline: true },
             { name: 'Access Level', value: accessLevel, inline: false },
-            { name: 'Monthly Requirement', value: 'Need: **2 full docs** OR **4 comments** OR **1 doc + 2 comments**', inline: false }
         )
         .setColor(monthlyRequirementMet ? 0x00AA55 : 0xFF9900);
 }
@@ -2274,16 +2284,28 @@ async function handleFeedbackAddSlashCommand(interaction) {
     }
     
     const user = interaction.options.getUser('user');
+    const feedbackType = interaction.options.getString('type'); // Get the selected type
     const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
     
-    // Add validated feedbacks directly (staff override)
+    // Add validated feedbacks with the specified type
     for (let i = 0; i < amount; i++) {
-        await addValidatedFeedback(user.id, 'doc', interaction.user.id, 'staff-override');
+        await addValidatedFeedback(user.id, feedbackType, interaction.user.id, 'staff-override');
     }
     
+    // Create a more descriptive embed
+    const typeDisplay = feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
     const embed = new EmbedBuilder()
         .setTitle('Validated Feedbacks Added ☝️')
-        .setDescription(`Added **${amount}** validated feedback${amount !== 1 ? 's' : ''} to ${user.displayName}'s record.`)
+        .setDescription(`Added **${amount}** validated **${typeDisplay}** feedback${amount !== 1 ? 's' : ''} to ${user.displayName}'s record.`)
+        .addFields({
+            name: 'Added',
+            value: `${amount}x ${typeDisplay}`,
+            inline: true
+        }, {
+            name: 'Staff Override',
+            value: `Added by ${interaction.user.displayName}`,
+            inline: true
+        })
         .setColor(0x00AA55);
     
     await replyTemporary(interaction, { embeds: [embed] });
@@ -2295,13 +2317,15 @@ async function handleFeedbackRemoveSlashCommand(interaction) {
     }
     
     const user = interaction.options.getUser('user');
+    const feedbackType = interaction.options.getString('type');
     const amount = Math.max(1, interaction.options.getInteger('amount') || 1);
     
     try {
-        // Get current validated feedbacks first
-        const currentCount = await getUserValidatedFeedbacks(user.id);
+        // First, get current counts
+        const currentValidated = await getUserValidatedFeedbacksByType(user.id);
+        const currentTotal = currentValidated.docs + currentValidated.comments;
         
-        if (currentCount === 0) {
+        if (currentTotal === 0) {
             const embed = new EmbedBuilder()
                 .setTitle('No Feedbacks to Remove ☝️')
                 .setDescription(`${user.displayName} has no validated feedbacks to remove.`)
@@ -2310,41 +2334,171 @@ async function handleFeedbackRemoveSlashCommand(interaction) {
             return await replyTemporary(interaction, { embeds: [embed] });
         }
         
-        const actualRemoved = Math.min(amount, currentCount);
+        // Get the feedbacks that will be removed (so we can update monthly counts)
+        let selectQuery, selectParams;
         
-        // Remove most recent validated feedbacks
-        await global.db.db.run(`
-            DELETE FROM validated_feedback 
-            WHERE user_id = ? 
-            AND id IN (
-                SELECT id FROM validated_feedback 
+        if (feedbackType === 'any') {
+            selectQuery = `
+                SELECT id, feedback_type, validated_at FROM validated_feedback 
                 WHERE user_id = ? 
                 ORDER BY validated_at DESC 
-                LIMIT ?
-            )
-        `, [user.id, user.id, actualRemoved]);
+                LIMIT ?`;
+            selectParams = [user.id, amount];
+        } else {
+            selectQuery = `
+                SELECT id, feedback_type, validated_at FROM validated_feedback 
+                WHERE user_id = ? AND feedback_type = ?
+                ORDER BY validated_at DESC 
+                LIMIT ?`;
+            selectParams = [user.id, feedbackType, amount];
+        }
+        
+        // Get the feedbacks to be removed
+        const feedbacksToRemove = await global.db.runQuery(selectQuery, selectParams);
+        
+        if (feedbacksToRemove.length === 0) {
+            const typeDisplay = feedbackType === 'any' ? 'Any Type' : 
+                              feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
+            
+            const embed = new EmbedBuilder()
+                .setTitle('No Matching Feedbacks Found ☝️')
+                .setDescription(`${user.displayName} has no **${typeDisplay}** feedbacks to remove.`)
+                .setColor(0xFF9900);
+            
+            return await replyTemporary(interaction, { embeds: [embed] });
+        }
+        
+        const actualRemoved = feedbacksToRemove.length;
+        
+        // Count how many of each type are being removed
+        let docsRemoved = 0;
+        let commentsRemoved = 0;
+        
+        for (const feedback of feedbacksToRemove) {
+            if (feedback.feedback_type === 'doc') {
+                docsRemoved++;
+            } else if (feedback.feedback_type === 'comment') {
+                commentsRemoved++;
+            }
+        }
+        
+        // Remove the feedbacks
+        const idsToRemove = feedbacksToRemove.map(f => f.id);
+        const placeholders = idsToRemove.map(() => '?').join(',');
+        
+        await global.db.runSingle(
+            `DELETE FROM validated_feedback WHERE id IN (${placeholders})`,
+            idsToRemove
+        );
+        
+        // Update total feedback count
+        const userData = await getUserData(user.id);
+        await updateUserData(user.id, {
+            total_feedback_all_time: Math.max(0, userData.total_feedback_all_time - actualRemoved)
+        });
+        
+        // Update monthly feedback counts - reduce from current month
+        const monthKey = global.db.getCurrentMonthKey();
+        const currentMonthly = await getUserMonthlyFeedbackByType(user.id);
+        
+        if (docsRemoved > 0 || commentsRemoved > 0) {
+            const newDocs = Math.max(0, currentMonthly.docs - docsRemoved);
+            const newComments = Math.max(0, currentMonthly.comments - commentsRemoved);
+            
+            await global.db.runSingle(
+                'UPDATE monthly_feedback SET docs = ?, comments = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND month_key = ?',
+                [newDocs, newComments, user.id, monthKey]
+            );
+            
+            console.log(`Updated monthly feedback: docs ${currentMonthly.docs} -> ${newDocs}, comments ${currentMonthly.comments} -> ${newComments}`);
+        }
+        
+        // Create response embed
+        const typeDisplay = feedbackType === 'any' ? '🔄 Any Type' : 
+                          feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
+        
+        let removalDetails = '';
+        if (feedbackType === 'any') {
+            removalDetails = `${docsRemoved} docs + ${commentsRemoved} comments`;
+        } else {
+            removalDetails = `${actualRemoved}x ${typeDisplay}`;
+        }
         
         const embed = new EmbedBuilder()
             .setTitle('Validated Feedbacks Removed ☝️')
             .setDescription(`Removed **${actualRemoved}** validated feedback${actualRemoved !== 1 ? 's' : ''} from ${user.displayName}'s record.`)
             .addFields({
-                name: 'Previous Count',
-                value: `${currentCount} feedbacks`,
+                name: 'Removed',
+                value: removalDetails,
                 inline: true
             }, {
-                name: 'New Count', 
-                value: `${currentCount - actualRemoved} feedbacks`,
+                name: 'Previous Total',
+                value: `${currentTotal} feedbacks`,
+                inline: true
+            }, {
+                name: 'New Total', 
+                value: `${currentTotal - actualRemoved} feedbacks`,
                 inline: true
             })
             .setColor(0xFF6B6B);
         
+        // Add monthly impact if any
+        if (docsRemoved > 0 || commentsRemoved > 0) {
+            const newMonthlyTotal = Math.max(0, currentMonthly.docs - docsRemoved) + Math.max(0, currentMonthly.comments - commentsRemoved);
+            embed.addFields({
+                name: 'Monthly Feedback Impact',
+                value: `Reduced monthly count by ${docsRemoved} docs + ${commentsRemoved} comments`,
+                inline: false
+            });
+        }
+        
         await replyTemporary(interaction, { embeds: [embed] });
+        
+        // Send DM to user
+        try {
+            const dmChannel = await user.createDM();
+            const dmEmbed = new EmbedBuilder()
+                .setTitle('⚠️ Validated Feedbacks Removed')
+                .setDescription(`A staff member has removed **${actualRemoved}** validated feedback${actualRemoved !== 1 ? 's' : ''} from your record.`)
+                .addFields({
+                    name: 'Removed by Staff',
+                    value: `${interaction.user.displayName}`,
+                    inline: true
+                }, {
+                    name: 'Type Removed',
+                    value: typeDisplay,
+                    inline: true
+                }, {
+                    name: 'Impact',
+                    value: `Total feedbacks: ${currentTotal} → ${currentTotal - actualRemoved}`,
+                    inline: false
+                })
+                .setColor(0xFF6B6B);
+            
+            if (docsRemoved > 0 || commentsRemoved > 0) {
+                dmEmbed.addFields({
+                    name: 'Monthly Requirement',
+                    value: 'Your monthly feedback count has also been reduced. Check `/progress` for current status.',
+                    inline: false
+                });
+            }
+            
+            await dmChannel.send({ embeds: [dmEmbed] });
+        } catch (dmError) {
+            console.log('Could not send DM to user about removed feedbacks:', dmError.message);
+        }
+        
     } catch (error) {
         console.error('Error removing feedbacks:', error);
         
         const errorEmbed = new EmbedBuilder()
             .setTitle('Error Removing Feedbacks ☝️')
             .setDescription('There was an error removing the feedbacks. Please try again.')
+            .addFields({
+                name: 'Error Details',
+                value: `\`\`\`${error.message}\`\`\``,
+                inline: false
+            })
             .setColor(0xFF6B6B);
         
         await replyTemporary(interaction, { embeds: [errorEmbed] });
@@ -2872,7 +3026,7 @@ function createAllCommandsEmbed() {
                 inline: false 
             },
             { 
-                name: '📊 New Requirements', 
+                name: '📊 Requirements', 
                 value: '**Monthly quota**: 2 full docs OR 4 comments OR 1 doc + 2 comments\n**Access levels**: Level-based progression with validated feedback requirements', 
                 inline: false 
             }
