@@ -814,7 +814,7 @@ async function handleCitadelChannelSlashCommand(interaction) {
         
         const totalValidated = validatedFeedbacks.docs + validatedFeedbacks.comments;
         const embed = new EmbedBuilder()
-            .setTitle('🏰 Citadel Channel Created!')
+            .setTitle('📚 Citadel Channel Created!')
             .setDescription(`Congratulations! Your personal literary chamber has been created: ${channel}`)
             .addFields(
                 { name: 'Channel Name', value: `**${channel.name}**`, inline: true },
