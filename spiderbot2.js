@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes, StringSelectMenuBuilder, ActionRowBuilder, ComponentType, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes, StringSelectMenuBuilder, ActionRowBuilder, ComponentType, ButtonBuilder, ButtonStyle, roleMention } = require('discord.js');
 const fs = require('fs').promises;
 const DatabaseManager = require('./database2');
 
@@ -2884,6 +2884,7 @@ async function handlePostRulesSlashCommand(interaction) {
 async function postRules(channel) {
     const guild = channel.guild;
     const channels = getClickableChannelMentions(guild);
+    const roles = getClickableRoleMentions(guild);
 
     const embed = new EmbedBuilder()
         .setTitle('The Nine Laws of Type&Draft ☝️')
@@ -2900,7 +2901,7 @@ async function postRules(channel) {
             },
             {
                 name: '📜 The Third Law',
-                value: `Upon earning access to our literary forums, you may participate in feedback exchange. **Provide at least validated feedback monthly or face purging.** New members must reach **Level 5** and provide **2 validated doc feedbacks OR 4 comment feedbacks OR 1 doc + 2 comment feedbacks** monthly. This ensures our community\'s integrity and meaningful contribution.`,
+                value: `Upon earning access to our literary forums, you may participate in feedback exchange. New members must reach ${roles.level5} and provide **2 validated doc feedbacks OR 4 comment feedbacks OR 1 doc + 2 comment feedbacks** monthly. This ensures our community\'s integrity and meaningful contribution.`,
                 inline: false
             },
             {
