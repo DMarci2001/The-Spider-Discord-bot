@@ -2753,7 +2753,7 @@ function createHelpEmbed(guild) {
         .addFields(
             { 
                 name: '📝 How to Give & Log Feedback', 
-                value: `**Step 1:** Give thoughtful feedback in ${channels.bookshelfDiscussion} or Citadel channels\n**Step 2:** Use \`/feedback\` and select your feedback type (Full Doc or Comments)\n**Step 3:** Wait for the author to validate your feedback with \`/feedback_valid\`\n**Step 4:** Earn validated feedback credit!`, 
+                value: `**Step 1:** Give thoughtful feedback in ${channels.bookshelfDiscussion} or Citadel channels. The in-line comment option also entails general discussion of plot, character, etc. outside of a document.\n**Step 2:** Use \`/feedback\` and select your feedback type (Full Doc or Comments)\n**Step 3:** Wait for the author to validate your feedback with \`/feedback_valid\`\n**Step 4:** Earn validated feedback credit!`, 
                 inline: false 
             },
             { 
