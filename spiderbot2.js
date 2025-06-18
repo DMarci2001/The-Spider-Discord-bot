@@ -2770,11 +2770,6 @@ function createHelpEmbed(guild) {
                 name: '👤 User Commands', 
                 value: '`/progress` - Check your progress and access levels\n`/feedback` - Log your feedback contribution\n`/feedback_valid` - Validate someone\'s feedback (thread owners)\n`/feedback_invalid` - Invalidate/remove validated feedback (thread owners)\n`/citadel_channel` - Create your own channel (Level 15 + validated)\n`/hall_of_fame` - View top contributors\n`/color_role` - Choose a unique color role (Level 15 + 15 validated feedbacks required)', 
                 inline: false 
-            },
-            { 
-                name: '👑 For Thread Owners', 
-                value: 'When someone gives you feedback, use `/feedback_valid @user type` to validate their contribution type and quality.', 
-                inline: false 
             }
         )
         .setColor(0x5865F2)
