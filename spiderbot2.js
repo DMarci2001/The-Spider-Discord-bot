@@ -2749,7 +2749,7 @@ function createHelpEmbed(guild) {
     const roles = getClickableRoleMentions(guild);
     
     return new EmbedBuilder()
-        .setTitle('Essential Commands & New Feedback System ☝️')
+        .setTitle('Essential Commands At Your Service ☝️')
         .addFields(
             { 
                 name: '📝 How to Give & Log Feedback', 
