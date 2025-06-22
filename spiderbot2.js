@@ -381,7 +381,12 @@ class WelcomeSystem {
         const embed = this.createWelcomeEmbed(member);
         
         try {
-            const message = await channel.send({ embeds: [embed] });
+            const welcomeWagonRole = guild.roles.cache.find(role => role.name === 'Welcome Wagon');
+            const pingText = welcomeWagonRole ? `${welcomeWagonRole}` : '';
+            const message = await channel.send({ 
+            content: pingText,
+            embeds: [embed] 
+        });
             
             this.logger.log(`✅ Welcome message sent for ${member.displayName} in #${channel.name}`);
             this.logger.log(`📬 Message ID: ${message.id}`);
