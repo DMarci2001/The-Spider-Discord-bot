@@ -583,6 +583,69 @@ async function createCitadelChannel(guild, userId, member, customName = null) {
 
         await sendDebugMessage('✅ Bot permissions verified');
 
+        // Find Level 10 and Level 15 roles
+        const level10Role = guild.roles.cache.find(role => role.name === 'Level 10');
+        const level15Role = guild.roles.cache.find(role => role.name === 'Level 15');
+
+        await sendDebugMessage(`Level 10 role found: ${level10Role ? `YES - "${level10Role.name}" (ID: ${level10Role.id})` : 'NO'}`);
+        await sendDebugMessage(`Level 15 role found: ${level15Role ? `YES - "${level15Role.name}" (ID: ${level15Role.id})` : 'NO'}`);
+
+    // Build permission overwrites correctly
+    const permissionOverwrites = [
+    // Deny @everyone access by default
+    {
+        id: guild.id,
+        deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
+    },
+    // Give channel owner full permissions
+    {
+        id: userId,
+        allow: [
+            PermissionFlagsBits.ViewChannel, 
+            PermissionFlagsBits.SendMessages, 
+            PermissionFlagsBits.ReadMessageHistory, 
+            PermissionFlagsBits.ManageThreads, 
+            PermissionFlagsBits.CreatePublicThreads,
+            PermissionFlagsBits.SendMessagesInThreads,  // Can send messages in threads they create
+            PermissionFlagsBits.CreatePrivateThreads   // Sometimes needed for thread creation
+        ]
+    }
+];
+
+// Add Level 10 role permissions (can view and give feedback in threads)
+if (level10Role) {
+    permissionOverwrites.push({
+        id: level10Role.id,
+        allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.CreatePublicThreads,
+            PermissionFlagsBits.SendMessagesInThreads,  // Can send messages in threads they create
+            PermissionFlagsBits.CreatePrivateThreads   // Can create feedback threads
+        ],
+        deny: [PermissionFlagsBits.SendMessages]  // Can't post directly in main channel
+    });
+    await sendDebugMessage(`✅ Added Level 10 role permissions for viewing and feedback threads`);
+}
+
+// Add Level 15 role permissions (can view, give feedback, and create their own chambers)
+if (level15Role) {
+    permissionOverwrites.push({
+        id: level15Role.id,
+        allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.CreatePublicThreads  // Can create feedback threads
+        ],
+        deny: [PermissionFlagsBits.SendMessages]  // Can't post directly in main channel (only owner can)
+    });
+    await sendDebugMessage(`✅ Added Level 15 role permissions for viewing and feedback threads`);
+}
+
+await sendDebugMessage(`Final permission overwrites count: ${permissionOverwrites.length}`);
+
+await sendDebugMessage(`Final permission overwrites count: ${permissionOverwrites.length}`);
+
         // Generate channel name - use custom name if provided, otherwise fallback to display name
         let channelName;
         if (customName) {
@@ -623,29 +686,13 @@ async function createCitadelChannel(guild, userId, member, customName = null) {
 
         await sendDebugMessage('✅ Channel name available, creating channel...');
 
-        // Create the channel
+        // Create the channel - FIXED: Use the permissionOverwrites variable
         const channel = await guild.channels.create({
             name: channelName,
             type: 0,
             parent: citadelCategory.id,
             topic: `${member.displayName}'s Literary Chamber`,
-            permissionOverwrites: [
-                {
-                    id: guild.id,
-                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-                    deny: [PermissionFlagsBits.SendMessages]
-                },
-                {
-                    id: userId,
-                    allow: [
-                        PermissionFlagsBits.ViewChannel, 
-                        PermissionFlagsBits.SendMessages, 
-                        PermissionFlagsBits.ReadMessageHistory, 
-                        PermissionFlagsBits.ManageThreads, 
-                        PermissionFlagsBits.CreatePublicThreads
-                    ]
-                }
-            ]
+            permissionOverwrites: permissionOverwrites  // <-- FIXED: Use the variable!
         });
 
         await sendDebugMessage(`✅ **CHANNEL CREATED SUCCESSFULLY**: ${channel} (ID: ${channel.id})`);
@@ -847,33 +894,6 @@ function hasAccessToCitadelChannel(member) {
     return hasLevel; // We'll check validated feedbacks separately in the command
 }
 
-async function isCitadelChannel(channel) {
-    if (!channel || channel.type !== 0 || !channel.parentId) return false;
-    
-    function normalizeText(text) {
-        return text
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .replace(/[^\w\s]/g, '')
-            .toLowerCase()
-            .trim();
-    }
-    
-    const citadelCategories = channel.guild.channels.cache.filter(ch => {
-        if (ch.type !== 4) return false;
-        
-        const normalizedName = normalizeText(ch.name);
-        return normalizedName.includes('citadel') || 
-               normalizedName.includes('the citadel') ||
-               ch.name.toLowerCase().includes('citadel') ||
-               ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
-               ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-               ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
-    });
-    
-    return citadelCategories.some(category => channel.parentId === category.id);
-}
-
 function hasAccessToBookshelfDemo(member) {
     return hasLevel5Role(member);
 }
@@ -998,11 +1018,6 @@ function getCurrentMonthKey() {
     const now = new Date();
     const adjustedDate = new Date(now.getTime() - (24 * 60 * 60 * 1000));
     return `${adjustedDate.getFullYear()}-${adjustedDate.getMonth()}`;
-}
-
-async function isUserPardoned(userId) {
-    const monthKey = getCurrentMonthKey();
-    return await global.db.isUserPardoned(userId, monthKey);
 }
 
 async function getUserMonthlyFeedback(userId) {
@@ -1565,7 +1580,7 @@ const commands = [
 
 async function registerCommands() {
     try {
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT2_TOKEN);
         console.log('Started refreshing application (/) commands.');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('Successfully reloaded application (/) commands.');
@@ -1724,53 +1739,6 @@ client.on('threadCreate', async (thread) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // ===== CITADEL CHANNEL RESTRICTIONS =====
-    
-    // Check direct messages in Citadel channels
-    if (message.channel.type === 0 && message.channel.parentId) {
-        const isInCitadelCategory = await isCitadelChannel(message.channel);
-        
-        if (isInCitadelCategory) {
-            // This is a direct message in a Citadel channel
-            const userCitadelChannel = await global.db.getUserCitadelChannel(message.author.id);
-            const isChannelOwner = userCitadelChannel === message.channel.id;
-            
-            if (!isChannelOwner) {
-                // Not the channel owner - delete message and notify
-                await message.delete();
-                await sendTemporaryChannelMessage(message.channel, 
-                    `Only the chamber owner can post directly in this channel, **${message.author.displayName}**! Create a feedback thread instead. ☝️`,
-                    8000
-                );
-                return;
-            }
-        }
-    }
-    
-    // Check messages in threads within Citadel channels
-    if (message.channel.isThread() && message.channel.parent) {
-        const isParentCitadelChannel = await isCitadelChannel(message.channel.parent);
-        
-        if (isParentCitadelChannel) {
-            // This is a thread in a Citadel channel
-            const userCitadelChannel = await global.db.getUserCitadelChannel(message.author.id);
-            const isChannelOwner = userCitadelChannel === message.channel.parent.id;
-            const isThreadCreator = message.channel.ownerId === message.author.id;
-            
-            if (!isChannelOwner && !isThreadCreator) {
-                // Neither channel owner nor thread creator - delete message and notify
-                await message.delete();
-                await sendTemporaryChannelMessage(message.channel, 
-                    `Only the chamber owner and thread creator can post in this feedback thread, **${message.author.displayName}**! ☝️`,
-                    8000
-                );
-                return;
-            }
-        }
-    }
-
-    // ===== REST OF EXISTING MESSAGE HANDLING =====
-    
     // Monitor feedback posting in bookshelf-discussion
     if (message.channel.isThread() && 
         message.channel.parent && 
@@ -2776,9 +2744,9 @@ async function handleHallOfFameSlashCommand(interaction) {
 async function createHallOfFameEmbed(guild) {
     try {
         // Get top contributors by feedback type
-        const topDocContributors = await getTopContributorsByType('doc', 11);
-        const topCommentContributors = await getTopContributorsByType('comment', 11);
-        const topOverallContributors = await global.db.getTopContributors(11);
+        const topDocContributors = await getTopContributorsByType('doc', 5);
+        const topCommentContributors = await getTopContributorsByType('comment', 5);
+        const topOverallContributors = await global.db.getTopContributors(5);
         
         if (topOverallContributors.length === 0) {
             return new EmbedBuilder()
@@ -2933,40 +2901,92 @@ async function handleStatsSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    const embed = await createStatsEmbed(interaction.guild);
-    await replyTemporary(interaction, { embeds: [embed] });
+    await interaction.deferReply();
+    
+    try {
+        // Send initial debug message
+        await interaction.editReply('🔍 **DEBUG**: Starting stats command...');
+        
+        const embed = await createStatsEmbedDebug(interaction);
+        
+        await interaction.editReply({ content: '✅ **DEBUG**: Stats completed!', embeds: [embed] });
+        
+    } catch (error) {
+        // Send detailed error info to Discord
+        const errorEmbed = new EmbedBuilder()
+            .setTitle('Stats Command Debug Error')
+            .setDescription(`\`\`\`${error.message}\`\`\``)
+            .addFields({
+                name: 'Error Stack',
+                value: `\`\`\`${error.stack?.substring(0, 1000) || 'No stack trace'}\`\`\``,
+                inline: false
+            })
+            .setColor(0xFF6B6B);
+            
+        await interaction.editReply({ content: '❌ **ERROR OCCURRED**', embeds: [errorEmbed] });
+    }
 }
 
-async function createStatsEmbed(guild) {
+// Create a debug version that sends messages to Discord:
+async function createStatsEmbedDebug(interaction) {
+    const guild = interaction.guild;
+    
+    await interaction.editReply('🔍 **DEBUG**: Getting total members...');
     const totalMembers = guild.memberCount;
     
-    // Get all Level 5 members
+    await interaction.editReply(`🔍 **DEBUG**: Total members: ${totalMembers}. Getting month key...`);
+    const monthKey = getCurrentMonthKey();
+    
+    await interaction.editReply(`🔍 **DEBUG**: Month key: ${monthKey}. Finding Level 5 members...`);
     const level5Members = guild.members.cache.filter(member => hasLevel5Role(member));
     const totalLevel5 = level5Members.size;
+    
+    await interaction.editReply(`🔍 **DEBUG**: Found ${totalLevel5} Level 5 members. Processing each member...`);
+    
+    if (totalLevel5 === 0) {
+        return new EmbedBuilder()
+            .setTitle('No Level 5 Members Found')
+            .setDescription('No Level 5+ members found to process.')
+            .setColor(0xFF9900);
+    }
     
     let monthlyContributors = 0;
     let fulfillmentList = '';
     let nonFulfillmentList = '';
     let pardonedList = '';
     let pardonedCount = 0;
+    let processedCount = 0;
     
-    // Process each member with new feedback system
+    // Process each member with debug updates
     for (const [userId, member] of level5Members) {
-        const monthlyFeedback = await getUserMonthlyFeedbackByType(userId);
-        const meetingRequirement = checkMonthlyRequirementMet(monthlyFeedback.docs, monthlyFeedback.comments);
-        const isPardoned = await isUserPardoned(userId);
-        const status = meetingRequirement ? '✅' : '❌';
+        processedCount++;
         
-        if (meetingRequirement) {
-            monthlyContributors++;
-            fulfillmentList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
-        } else if (isPardoned) {
-            pardonedCount++;
-            pardonedList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C) - *Pardoned*\n`;
-        } else {
-            nonFulfillmentList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
+        if (processedCount % 5 === 0) {
+            await interaction.editReply(`🔍 **DEBUG**: Processing member ${processedCount}/${totalLevel5}...`);
+        }
+        
+        try {
+            const monthlyFeedback = await getUserMonthlyFeedbackByType(userId);
+            const meetingRequirement = checkMonthlyRequirementMet(monthlyFeedback.docs, monthlyFeedback.comments);
+            const isPardoned = await global.db.isUserPardoned(userId, monthKey);
+            const status = meetingRequirement ? '✅' : '❌';
+            
+            if (meetingRequirement) {
+                monthlyContributors++;
+                fulfillmentList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
+            } else if (isPardoned) {
+                pardonedCount++;
+                pardonedList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C) - *Pardoned*\n`;
+            } else {
+                nonFulfillmentList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
+            }
+        } catch (memberError) {
+            await interaction.editReply(`❌ **ERROR** processing ${member.displayName}: ${memberError.message}`);
+            throw memberError;
         }
     }
+    
+    await interaction.editReply(`🔍 **DEBUG**: Processed all members. Building final embed...`);
     
     const contributionRate = totalLevel5 > 0 ? Math.round((monthlyContributors / totalLevel5) * 100) : 0;
     
@@ -3021,7 +3041,7 @@ async function handleFeedbackAddSlashCommand(interaction) {
     // Create a more descriptive embed
     const typeDisplay = feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
     const embed = new EmbedBuilder()
-        .setTitle('Feedback Added ☝️')
+        .setTitle('Validated Feedbacks Added ☝️')
         .setDescription(`Added **${amount}** validated **${typeDisplay}** feedback${amount !== 1 ? 's' : ''} to ${user.displayName}'s record.`)
         .setColor(0x00AA55);
     
@@ -3286,6 +3306,11 @@ async function handlePardonSlashCommand(interaction) {
     
     const embed = new EmbedBuilder()
         .setTitle('Pardon Granted ☝️')
+        .setDescription(`${user.displayName} has been pardoned from this month's feedback requirements.`)
+        .addFields(
+            { name: 'Pardon Type', value: reasonDisplay, inline: true },
+            { name: 'New Requirement', value: 'Pardoned members are exempt from: **2 docs** OR **4 comments** OR **1 doc + 2 comments**', inline: false }
+        )
         .setColor(0x00AA55);
     
     await replyTemporary(interaction, { embeds: [embed] });
@@ -3339,10 +3364,10 @@ async function handlePardonedLastMonthSlashCommand(interaction) {
     for (const record of pardonedUsers.slice(0, 20)) {
         try {
             const member = await interaction.guild.members.fetch(record.user_id);
-            const reasonDisplay = record.reason === 'late_joiner' ? '🕐' : '✅';
+            const reasonDisplay = record.reason === 'late_joiner' ? '🕐' : '👑';
             pardonList += `${reasonDisplay} **${member.displayName}**\n`;
         } catch (error) {
-            pardonList += `${record.reason === 'late_joiner' ? '🕐' : '✅'} *[Left Server]*\n`;
+            pardonList += `${record.reason === 'late_joiner' ? '🕐' : '👑'} *[Left Server]*\n`;
         }
     }
     
@@ -3354,7 +3379,7 @@ async function handlePardonedLastMonthSlashCommand(interaction) {
             inline: false
         })
         .setColor(0x00AA55)
-        .setFooter({ text: '✅ = Staff Discretion • 🕐 = Late Joiner' });
+        .setFooter({ text: '👑 = Staff Discretion • 🕐 = Late Joiner' });
     
     await replyTemporary(interaction, { embeds: [embed] });
 }
@@ -3401,73 +3426,33 @@ async function handlePurgeListSlashCommand(interaction) {
 
 async function createPurgeListEmbed(guild) {
     const allMembers = await guild.members.fetch();
+    const level5Members = allMembers.filter(member => hasLevel5Role(member));
     
     let purgeList = '';
-    let safeList = '';
-    let protectedList = '';
-    
     let purgeCount = 0;
-    let safeCount = 0;
-    let belowLevel5Count = 0;
-    let protectedCount = 0;
     
-    // Get current month key once
-    const monthKey = getCurrentMonthKey();
-    
-    for (const [userId, member] of allMembers) {
-        // Skip bots
-        if (member.user.bot) continue;
+    for (const [userId, member] of level5Members) {
+        const monthlyFeedback = await getUserMonthlyFeedbackByType(userId);
+        const isPardoned = await global.db.isUserPardoned(userId, monthKey);
+        const meetingRequirement = checkMonthlyRequirementMet(monthlyFeedback.docs, monthlyFeedback.comments);
         
-        // Check if member is protected from purge (staff/admin)
-        if (isProtectedFromPurge(member)) {
-            protectedCount++;
-            protectedList += `🛡️ **${member.displayName}** - Staff/Admin\n`;
-            continue;
-        }
-        
-        // Check if member has Level 5+ (subject to monthly requirements)
-        if (hasLevel5Role(member)) {
-            const monthlyFeedback = await getUserMonthlyFeedbackByType(userId);
-            const isPardoned = await global.db.isUserPardoned(userId, monthKey);
-            const meetingRequirement = checkMonthlyRequirementMet(monthlyFeedback.docs, monthlyFeedback.comments);
-            
-            if (meetingRequirement || isPardoned) {
-                // Actually safe - either meeting requirements or pardoned
-                safeCount++;
-                if (isPardoned) {
-                    safeList += `🔔 **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C) - *Pardoned*\n`;
-                } else {
-                    safeList += `✅ **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
-                }
-            } else {
-                // Level 5+ member who would be purged - not meeting requirements and not pardoned
-                purgeCount++;
+        if (!meetingRequirement && !isPardoned && !isProtectedFromPurge(member)) {
+            purgeCount++;
+            if (purgeList.length < 900) {
                 purgeList += `❌ **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
             }
-        } else {
-            // Below Level 5 - not subject to monthly feedback requirements
-            purgeCount++;
-            purgeList += `❌ **${member.displayName}**\n`;
         }
     }
     
     const embed = new EmbedBuilder()
-        .setTitle('Complete Monthly Purge Analysis ☝️')
-        .setDescription(`**Total Members**: ${allMembers.size - allMembers.filter(m => m.user.bot).size} (excluding bots)`)
-        .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
-    
-    // Add purge list (Level 5+ not meeting requirements)
-    if (purgeCount > 0) {
-        embed.addFields({
+        .setTitle('Monthly Purge List ☝️')
+        .addFields({
             name: `🔥 To be Purged (${purgeCount})`,
             value: purgeList || '• None scheduled for purge',
             inline: false
-        });
-    }
-    
-    embed.setFooter({ 
-        text: `Monthly requirement: 2 docs OR 4 comments OR 1 doc + 2 comments • Only Level 5+ subject to purge requirements • (D=Docs, C=Comments)` 
-    });
+        })
+        .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55)
+        .setFooter({ text: 'Monthly requirement: 2 docs OR 4 comments OR 1 doc + 2 comments' });
     
     return embed;
 }
@@ -4018,7 +4003,7 @@ async function sendStaffOnlyMessage(target, isInteraction = false) {
 }
 
 // ===== BOT LOGIN =====
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login(process.env.DISCORD_BOT2_TOKEN);
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
