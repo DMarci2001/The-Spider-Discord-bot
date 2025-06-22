@@ -847,6 +847,33 @@ function hasAccessToCitadelChannel(member) {
     return hasLevel; // We'll check validated feedbacks separately in the command
 }
 
+async function isCitadelChannel(channel) {
+    if (!channel || channel.type !== 0 || !channel.parentId) return false;
+    
+    function normalizeText(text) {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\w\s]/g, '')
+            .toLowerCase()
+            .trim();
+    }
+    
+    const citadelCategories = channel.guild.channels.cache.filter(ch => {
+        if (ch.type !== 4) return false;
+        
+        const normalizedName = normalizeText(ch.name);
+        return normalizedName.includes('citadel') || 
+               normalizedName.includes('the citadel') ||
+               ch.name.toLowerCase().includes('citadel') ||
+               ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+               ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+               ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+    });
+    
+    return citadelCategories.some(category => channel.parentId === category.id);
+}
+
 function hasAccessToBookshelfDemo(member) {
     return hasLevel5Role(member);
 }
@@ -1697,6 +1724,53 @@ client.on('threadCreate', async (thread) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
+    // ===== CITADEL CHANNEL RESTRICTIONS =====
+    
+    // Check direct messages in Citadel channels
+    if (message.channel.type === 0 && message.channel.parentId) {
+        const isInCitadelCategory = await isCitadelChannel(message.channel);
+        
+        if (isInCitadelCategory) {
+            // This is a direct message in a Citadel channel
+            const userCitadelChannel = await global.db.getUserCitadelChannel(message.author.id);
+            const isChannelOwner = userCitadelChannel === message.channel.id;
+            
+            if (!isChannelOwner) {
+                // Not the channel owner - delete message and notify
+                await message.delete();
+                await sendTemporaryChannelMessage(message.channel, 
+                    `Only the chamber owner can post directly in this channel, **${message.author.displayName}**! Create a feedback thread instead. ☝️`,
+                    8000
+                );
+                return;
+            }
+        }
+    }
+    
+    // Check messages in threads within Citadel channels
+    if (message.channel.isThread() && message.channel.parent) {
+        const isParentCitadelChannel = await isCitadelChannel(message.channel.parent);
+        
+        if (isParentCitadelChannel) {
+            // This is a thread in a Citadel channel
+            const userCitadelChannel = await global.db.getUserCitadelChannel(message.author.id);
+            const isChannelOwner = userCitadelChannel === message.channel.parent.id;
+            const isThreadCreator = message.channel.ownerId === message.author.id;
+            
+            if (!isChannelOwner && !isThreadCreator) {
+                // Neither channel owner nor thread creator - delete message and notify
+                await message.delete();
+                await sendTemporaryChannelMessage(message.channel, 
+                    `Only the chamber owner and thread creator can post in this feedback thread, **${message.author.displayName}**! ☝️`,
+                    8000
+                );
+                return;
+            }
+        }
+    }
+
+    // ===== REST OF EXISTING MESSAGE HANDLING =====
+    
     // Monitor feedback posting in bookshelf-discussion
     if (message.channel.isThread() && 
         message.channel.parent && 
@@ -2947,7 +3021,7 @@ async function handleFeedbackAddSlashCommand(interaction) {
     // Create a more descriptive embed
     const typeDisplay = feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
     const embed = new EmbedBuilder()
-        .setTitle('Validated Feedbacks Added ☝️')
+        .setTitle('Feedback Added ☝️')
         .setDescription(`Added **${amount}** validated **${typeDisplay}** feedback${amount !== 1 ? 's' : ''} to ${user.displayName}'s record.`)
         .setColor(0x00AA55);
     
