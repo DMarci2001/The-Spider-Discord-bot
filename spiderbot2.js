@@ -867,10 +867,8 @@ async function handleCitadelChannelSlashCommand(interaction) {
         const totalValidated = validatedFeedbacks.docs + validatedFeedbacks.comments;
         const embed = new EmbedBuilder()
             .setTitle('📚 Citadel Channel Created!')
-            .setDescription(`Congratulations! Your personal literary chamber has been created: ${channel}`)
             .addFields(
                 { name: 'Channel Name', value: `**${channel.name}**`, inline: true },
-                { name: 'Achievement Unlocked', value: `✅ **Level 15** + **${totalValidated} Validated Feedbacks**`, inline: false },
                 { name: 'Your New Powers', value: '• Post unlimited stories and chapters\n• Manage feedback threads\n• Full creative control of your space', inline: false },
                 { name: 'Next Steps', value: 'Visit your new channel to start posting your literary works!', inline: false }
             )
