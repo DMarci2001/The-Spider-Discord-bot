@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes, StringSelectMenuBuilder, ActionRowBuilder, ComponentType, ButtonBuilder, ButtonStyle, roleMention } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes, StringSelectMenuBuilder, ActionRowBuilder, ComponentType, ButtonBuilder, ButtonStyle, roleMention, channelMention } = require('discord.js');
 const fs = require('fs').promises;
 const DatabaseManager = require('./database2');
 
@@ -2826,7 +2826,7 @@ async function createHallOfFameEmbed(guild) {
                 const member = await guild.members.fetch(contributor.user_id);
                 const rank = i + 1;
                 const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
-                docLeaderboard += `${medal} **${member.displayName}** - ${contributor.doc_count} doc${contributor.doc_count !== 1 ? 's' : ''}\n`;
+                docLeaderboard += `${medal} ${member.displayName} - ${contributor.doc_count} doc${contributor.doc_count !== 1 ? 's' : ''}\n`;
             } catch (error) {
                 continue;
             }
@@ -2840,7 +2840,7 @@ async function createHallOfFameEmbed(guild) {
                 const member = await guild.members.fetch(contributor.user_id);
                 const rank = i + 1;
                 const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
-                commentLeaderboard += `${medal} **${member.displayName}** - ${contributor.comment_count} comment${contributor.comment_count !== 1 ? 's' : ''}\n`;
+                commentLeaderboard += `${medal} ${member.displayName} - ${contributor.comment_count} comment${contributor.comment_count !== 1 ? 's' : ''}\n`;
             } catch (error) {
                 continue;
             }
@@ -2857,7 +2857,7 @@ async function createHallOfFameEmbed(guild) {
                 
                 // Get detailed breakdown for this user
                 const userFeedback = await getUserValidatedFeedbacksByType(contributor.user_id);
-                overallLeaderboard += `${medal} **${member.displayName}** - ${contributor.total_feedback_all_time} total (${userFeedback.docs}D/${userFeedback.comments}C)\n`;
+                overallLeaderboard += `${medal} ${member.displayName} - ${contributor.total_feedback_all_time} total (${userFeedback.docs}D/${userFeedback.comments}C)\n`;
             } catch (error) {
                 continue;
             }
@@ -2932,7 +2932,7 @@ function createHelpEmbed(guild) {
         .addFields(
             { 
                 name: '📝 How to Give & Log Feedback', 
-                value: `**Step 1:** Give thoughtful feedback in ${channels.bookshelfDiscussion} or the Citadel chambers. While the Full Google Doc Review entails creating a Google Document where you answer all the prompting questions of the author in detail, the In-ine Comment option entails general discussion of plot, character, etc. outside of a document.\n**Step 2:** Use \`/feedback\` and select your feedback type\n**Step 3:** Wait for the author to validate it`, 
+                value: `**Step 1:** Give thoughtful feedback *under the threads* in ${channels.bookshelfDiscussion} or create a thread yourself in Citadel chambers(**See: ${channels.serverGuideChannel}**). While the Full Google Doc Review entails creating a Google Document where you answer all the prompting questions of the author in detail (plus your opinion on matters outside of the questions' scope, *if asked*), the In-line Comment option is about answering *some* of the questions, or - again, if the author *gives their nod to it* - general discussion of plot, character, etc. *outside* of a document. As a rule of thumb, you send the latter directly into the ${channels.bookshelfDiscussion} or Citadel chamber thread, though you may create a Doc for it, if you wish to.\n**Step 2:** Type \`/feedback\` into the chatbox and select your feedback type\n**Step 3:** Wait for the author to validate it`, 
                 inline: false 
             },
             { 
