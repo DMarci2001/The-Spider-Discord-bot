@@ -381,7 +381,13 @@ class WelcomeSystem {
         const embed = this.createWelcomeEmbed(member);
         
         try {
-            const message = await channel.send({ embeds: [embed] });
+            const pingText = getRoleMention(member.guild, 'Welcome Wagon');
+    
+            // Send message with optional ping
+            const message = await channel.send({ 
+            content: pingText,
+            embeds: [embed] 
+        });
             
             this.logger.log(`✅ Welcome message sent for ${member.displayName} in #${channel.name}`);
             this.logger.log(`📬 Message ID: ${message.id}`);
@@ -964,7 +970,8 @@ function getClickableRoleMentions(guild) {
         reader: getRoleMention(guild, 'reader'),
         level5: getRoleMention(guild, 'Level 5'),
         level10: getRoleMention(guild, 'Level 10'),
-        level15: getRoleMention(guild, 'Level 15')
+        level15: getRoleMention(guild, 'Level 15'),
+        welcomeWagon: getRoleMention(guild, 'Welcome Wagon')
     };
 }
 
