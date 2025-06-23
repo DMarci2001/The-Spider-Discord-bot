@@ -2925,7 +2925,7 @@ function createHelpEmbed(guild) {
         .addFields(
             { 
                 name: '📝 How to Give & Log Feedback', 
-                value: `**Step 1:** Give thoughtful feedback in ${channels.bookshelfDiscussion} or Citadel channels. While the Full GOogle Doc Review entails creating a Google Document where you answer all the prompting questions of the author in detail, the In-ine Comment option entails general discussion of plot, character, etc. outside of a document.\n**Step 2:** Use \`/feedback\` and select your feedback type\n**Step 3:** Wait for the author to validate it`, 
+                value: `**Step 1:** Give thoughtful feedback in ${channels.bookshelfDiscussion} or the Citadel chambers. While the Full Google Doc Review entails creating a Google Document where you answer all the prompting questions of the author in detail, the In-ine Comment option entails general discussion of plot, character, etc. outside of a document.\n**Step 2:** Use \`/feedback\` and select your feedback type\n**Step 3:** Wait for the author to validate it`, 
                 inline: false 
             },
             { 
