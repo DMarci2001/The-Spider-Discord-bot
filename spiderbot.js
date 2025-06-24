@@ -159,7 +159,7 @@ const ACCESS_REQUIREMENTS = {
 
 const BOOKSHELF_DEMO_LIMIT = 2; // Max posts in demo bookshelf
 
-const MONITORED_FORUMS = ['🗪╠bookshelf-discussion', '📚╠bookshelf'];
+const MONITORED_FORUMS = ['💬╠bookshelf-discussion', '📚╠bookshelf'];
 const ACTIVITY_MONITOR_CHANNEL = '📊╠activity-monitor';
 
 // Welcome system configuration (keeping existing)
@@ -938,10 +938,10 @@ function getChannelMention(guild, channelName) {
 
 function getClickableChannelMentions(guild) {
     return {
-        bookshelfDiscussion: getChannelMention(guild, '🗪╠bookshelf-discussion'),
+        bookshelfDiscussion: getChannelMention(guild, '💬╠bookshelf-discussion'),
         bookshelf: getChannelMention(guild, '📚╠bookshelf'),
         rulesChannel: getChannelMention(guild, '📜╠rules'),
-        serverGuideChannel: getChannelMention(guild, '🗺╠server-guide'),
+        serverGuideChannel: getChannelMention(guild, '🧭╠server-guide'),
         botStuff: getChannelMention(guild, '🐤╠bot-stuff'),
         reactionRoles: getChannelMention(guild, '👑╠reaction-roles'),
         announcements: getChannelMention(guild, '📢╠announcements'),
@@ -1086,7 +1086,7 @@ function isInAllowedFeedbackThread(channel) {
     }
     
     // RULE 1: Allow threads in bookshelf-discussion forum
-    if (channel.isThread() && channel.parent && channel.parent.name === '🗪╠bookshelf-discussion') {
+    if (channel.isThread() && channel.parent && channel.parent.name === '💬╠bookshelf-discussion') {
         console.log(`✅ Thread in bookshelf-discussion forum is allowed`);
         return true;
     }
@@ -1803,7 +1803,7 @@ client.on('messageCreate', async (message) => {
     // Monitor feedback posting in bookshelf-discussion
     if (message.channel.isThread() && 
         message.channel.parent && 
-        message.channel.parent.name === '🗪╠bookshelf-discussion') {
+        message.channel.parent.name === '💬╠bookshelf-discussion') {
         
         console.log(`💬 Message posted in ${message.channel.parent.name}: ${message.author.displayName}`);
         
@@ -3777,7 +3777,7 @@ async function postServerGuide(channel) {
             },
             {
                 name: '🎯 Progression System',
-                value: `• **${roles.level5}**: Access feedback forums\n• **${roles.level10}** + 2 Google Doc OR 4 comment OR 1 Doc and 1 comment feedbacks: Post 2 demo chapters\n• **${roles.level15}** + 3 additional Doc OR 6 comment OR 1 comment and 4 Docs OR 2 comment and 2 Docs feedbacks: Own unlimited Citadel channel\n\n**⚠️ Monthly requirement**: 2 doc feedbacks OR 4 comment feedbacks OR 1 doc + 2 comments\n**⚠️ Important note:** You must read(not necessarily provide feedback) all previous chapters posted for context before providing Google Doc feedback. In-line comments are allowed without having read previous chpaters.`,
+                value: `• **${roles.level5}**: Access feedback forums\n• **${roles.level10}** + 2 Google Doc OR 4 comment OR 1 Doc and 1 comment feedbacks: Post 2 demo chapters\n• **${roles.level15}** + 3 additional Doc OR 6 comment OR 1 comment and 4 Docs OR 2 comment and 2 Docs feedbacks: Own unlimited Citadel channel\n\n**⚠️ Monthly requirement**: 2 doc feedbacks OR 4 comment feedbacks OR 1 doc + 2 comments\n**⚠️ Important note:** You must read(not necessarily provide feedback) all previous chapters posted for context before providing Google Doc feedback. In-line comments are allowed without having read previous chapters.`,
                 inline: false
             }
         )
