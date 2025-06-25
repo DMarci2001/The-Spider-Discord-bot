@@ -2838,7 +2838,7 @@ async function createHallOfFameEmbed(guild) {
                 const member = await guild.members.fetch(contributor.user_id);
                 const rank = i + 1;
                 const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
-                commentLeaderboard += `${medal} ${member.displayName} - ${contributor.comment_count} comment${contributor.comment_count !== 1 ? 's' : ''}\n\n`;
+                commentLeaderboard += `${medal} ${member.displayName} - ${contributor.comment_count} comment${contributor.comment_count !== 1 ? 's' : ''}\n`;
             } catch (error) {
                 continue;
             }
