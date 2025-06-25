@@ -786,11 +786,6 @@ async function handleCitadelChannelSlashCommand(interaction) {
                 name: 'Current Progress',
                 value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${validatedFeedbacks.docs}/3\n• **Comment Feedbacks**: ${validatedFeedbacks.comments}/5\n• **Mixed Option**: ${validatedFeedbacks.docs >= 2 && validatedFeedbacks.comments >= 2 ? '✅ 2 docs + 2 comments met' : `❌ Docs: ${validatedFeedbacks.docs}/2 | Comments: ${validatedFeedbacks.comments}/2`}`,
                 inline: false
-            },
-            {
-                name: 'Requirement Options',
-                value: '**Option 1:** 3 validated doc feedbacks\n**Option 2:** 5 validated comment feedbacks\n**Option 3:** 2 validated docs + 2 validated comments',
-                inline: false
             })
             .setColor(0xFF9900);
         
@@ -3333,7 +3328,6 @@ async function handleUnpardonSlashCommand(interaction) {
     if (success) {
         const embed = new EmbedBuilder()
             .setTitle('Pardon Revoked ☝️')
-            .setDescription(`The clemency granted to **${user.displayName}** has been rescinded.`)
             .setColor(0xFF6B6B);
         
         await replyTemporary(interaction, { embeds: [embed] });
