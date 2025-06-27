@@ -143,6 +143,8 @@ const FEEDBACK_TYPES = {
     COMMENT: 'comment'
 };
 
+const FEEDBACK_CONFIRMATION_TIMEOUT = 2 * 24 * 60 * 60 * 1000;
+
 const MONTHLY_FEEDBACK_REQUIREMENT = {
     // Need 2 full docs OR 4 comments OR 1 doc + 2 comments
     MIN_DOCS: 2,
@@ -964,6 +966,7 @@ function getClickableRoleMentions(guild) {
         level5: getRoleMention(guild, 'Level 5'),
         level10: getRoleMention(guild, 'Level 10'),
         level15: getRoleMention(guild, 'Level 15'),
+        level30: getRoleMention(guild, 'Level 30'),
         welcomeWagon: getRoleMention(guild, 'Welcome Wagon')
     };
 }
@@ -1968,6 +1971,7 @@ async function handleSlashCommand(interaction) {
 
 // ===== NEW FEEDBACK COMMANDS =====
 
+// ===== COMPLETE FUNCTION TO REPLACE =====
 async function handleFeedbackSlashCommand(interaction) {
     console.log(`Processing /feedback command for ${interaction.user.displayName}`);
     
@@ -2121,17 +2125,77 @@ async function handleFeedbackSlashCommand(interaction) {
             return;
         }
         
+        // Determine who should be mentioned (thread owner or channel owner)
+        let ownerToMention = null;
+        let ownerType = '';
+        
+        if (channel.isThread()) {
+            // For threads, mention the thread owner
+            try {
+                const threadOwner = await guild.members.fetch(channel.ownerId);
+                ownerToMention = `<@${channel.ownerId}>`;
+                ownerType = 'thread owner';
+            } catch (error) {
+                console.log('Could not fetch thread owner for mention');
+            }
+        } else if (channel.type === 0 && channel.parentId) {
+            // For direct messages in Citadel channels, find the channel owner
+            try {
+                const ownerQuery = await global.db.getRow(
+                    'SELECT user_id FROM citadel_channels WHERE channel_id = ?',
+                    [channel.id]
+                );
+                
+                if (ownerQuery) {
+                    const channelOwner = await guild.members.fetch(ownerQuery.user_id);
+                    ownerToMention = `<@${ownerQuery.user_id}>`;
+                    ownerType = 'chamber owner';
+                }
+            } catch (error) {
+                console.log('Could not fetch channel owner for mention:', error);
+            }
+        }
+        
         const confirmEmbed = new EmbedBuilder()
             .setTitle('Feedback Logged as Pending ☝️')
-            .setDescription(`Your **${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}** feedback has been logged and is awaiting validation.`)
+            .setDescription(`**${interaction.user.displayName}**'s **${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}** feedback has been logged and is awaiting validation.`)
             .addFields(
-                { name: 'Next Step', value: 'The chamber owner or thread creator must use `/feedback_valid` to confirm your feedback type and quality.', inline: false },
+                { name: 'Next Step', value: `The ${ownerType || 'chamber owner or thread creator'} must use \`/feedback_valid\` to confirm the feedback type and quality.`, inline: false },
                 { name: 'Status', value: '⏳ **Pending Validation**', inline: true },
-                { name: 'Type', value: feedbackType === 'doc' ? '📄 Full Document' : '💬 In-line Comments', inline: true }
+                { name: 'Type', value: feedbackType === 'doc' ? '📄 Full Document' : '💬 In-line Comments', inline: true },
+                { name: 'Feedback Giver', value: `**${interaction.user.displayName}**`, inline: true }
             )
             .setColor(0xFF9900);
         
-        await buttonInteraction.update({ embeds: [confirmEmbed], components: [] });
+        // Add the mention field only if we found an owner to mention
+        if (ownerToMention) {
+            confirmEmbed.addFields({ 
+                name: `${ownerType.charAt(0).toUpperCase() + ownerType.slice(1)} Notification`, 
+                value: `${ownerToMention}`, 
+                inline: true 
+            });
+        }
+        
+        // Send public confirmation message to the channel
+        const publicConfirmation = await channel.send({ embeds: [confirmEmbed] });
+        
+        // Set up 2-day deletion timeout
+        setTimeout(async () => {
+            try { 
+                await publicConfirmation.delete(); 
+                console.log('Successfully deleted 2-day-old feedback confirmation message');
+            } catch (error) { 
+                console.log('Failed to delete feedback confirmation message:', error.message); 
+            }
+        }, FEEDBACK_CONFIRMATION_TIMEOUT);
+        
+        // Update the original ephemeral interaction to acknowledge the button click
+        const privateUpdateEmbed = new EmbedBuilder()
+            .setTitle('✅ Feedback Successfully Logged!')
+            .setDescription('Your feedback has been publicly logged in the channel and is awaiting validation.')
+            .setColor(0x00AA55);
+        
+        await buttonInteraction.update({ embeds: [privateUpdateEmbed], components: [] });
         
         // Send activity notification
         try {
