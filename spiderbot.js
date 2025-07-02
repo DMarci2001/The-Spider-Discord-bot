@@ -348,7 +348,7 @@ class WelcomeSystem {
 
         const embed = new EmbedBuilder()
             .setTitle('A New Bird Joins Our Literary Nest ☝️')
-            .setDescription(`Ah, **${member.displayName}**... How delightful. Another soul seeks to join our distinguished gathering of scribes and storytellers. After you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel} carefully, you may use the ${channels.botStuff} channel to call **my** \`/help\` command for further instructions! Please, make sure you study our rules and guide with the utmost care, because we are going to have to say farewell to each other if your introdcution is deemed sparse. *Hint:* Look for the pinned message in ${channels.introductions}. On a final note, our server is high-commitment, so make sure you are in a position and mindset to stay active before you choose to engage!`)
+            .setDescription(`Ah, **${member.displayName}**... How delightful. Another soul seeks to join our distinguished gathering of scribes and storytellers.\n\n After you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel} carefully, you may use the ${channels.botStuff} channel to call **my**(there are others) \`/help\` command for further instructions! Please, make sure you study our rules and guide with the utmost care, because we are going to have to say farewell if your introduction is deemed sparse. *Hint:* Look for the pinned message in ${channels.introductions}. On a final note, our server is high-commitment, so make sure you are in a position and mindset to stay active before you choose to engage!`)
             .setColor(config.color);
 
         if (config.thumbnail) {
