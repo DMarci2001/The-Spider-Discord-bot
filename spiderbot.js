@@ -2318,43 +2318,48 @@ async function handleFeedbackValidSlashCommand(interaction) {
         permissionType = 'thread owner';
     }
     // Check if this is a Citadel channel thread and user owns the Citadel channel
-    else if (channel.parent && channel.parent.type === 0) {
-        // Check if parent channel is in a Citadel category and user owns it
-        function normalizeText(text) {
-            return text
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[^\w\s]/g, '')
-                .toLowerCase()
-                .trim();
-        }
+else if (channel.parent && channel.parent.type === 0) {
+    // Check if parent channel is in a Citadel OR Chambers category and user owns it
+    function normalizeText(text) {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\w\s]/g, '')
+            .toLowerCase()
+            .trim();
+    }
+    
+    const allowedCategories = channel.guild.channels.cache.filter(ch => {
+        if (ch.type !== 4) return false;
         
-        const citadelCategories = channel.guild.channels.cache.filter(ch => {
-            if (ch.type !== 4) return false;
-            
-            const normalizedName = normalizeText(ch.name);
-            return normalizedName.includes('citadel') || 
-                   normalizedName.includes('the citadel') ||
-                   ch.name.toLowerCase().includes('citadel') ||
-                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
-                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
-        });
-        
-        // Check if this thread's parent channel is in a Citadel category
-        const isInCitadel = citadelCategories.some(category => 
-            channel.parent.parentId === category.id
-        );
-        
-        if (isInCitadel) {
-            // Check if the validator owns this Citadel channel
-            const userCitadelChannel = await global.db.getUserCitadelChannel(validator.id);
-            if (userCitadelChannel === channel.parent.id) {
-                hasPermission = true;
-                permissionType = 'Citadel channel owner';
-            }
+        const normalizedName = normalizeText(ch.name);
+        return normalizedName.includes('citadel') || 
+               normalizedName.includes('the citadel') ||
+               normalizedName.includes('chambers') ||  // NEW: Add chambers detection
+               ch.name.toLowerCase().includes('citadel') ||
+               ch.name.toLowerCase().includes('chambers') ||  // NEW: Add chambers detection
+               ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+               ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // NEW: Unicode bold chambers
+               ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+               ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // NEW: Unicode script chambers
+               ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+               ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // NEW: Unicode fraktur chambers
+    });
+    
+    // Check if this thread's parent channel is in any allowed category
+    const isInAllowedCategory = allowedCategories.some(category => 
+        channel.parent.parentId === category.id
+    );
+    
+    if (isInAllowedCategory) {
+        // Check if the validator owns this channel
+        const userOwnedChannel = await global.db.getUserCitadelChannel(validator.id);
+        if (userOwnedChannel === channel.parent.id) {
+            hasPermission = true;
+            permissionType = 'channel owner';
         }
     }
+}
     
     if (!hasPermission) {
         const embed = new EmbedBuilder()
@@ -2516,43 +2521,48 @@ async function handleFeedbackInvalidSlashCommand(interaction) {
     }
     
     // Check if this is a Citadel channel thread and user owns the Citadel channel
-    if (channel.parent && channel.parent.type === 0) {
-        function normalizeText(text) {
-            return text
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[^\w\s]/g, '')
-                .toLowerCase()
-                .trim();
-        }
+if (channel.parent && channel.parent.type === 0) {
+    function normalizeText(text) {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\w\s]/g, '')
+            .toLowerCase()
+            .trim();
+    }
+    
+    const allowedCategories = channel.guild.channels.cache.filter(ch => {
+        if (ch.type !== 4) return false;
         
-        const citadelCategories = channel.guild.channels.cache.filter(ch => {
-            if (ch.type !== 4) return false;
-            
-            const normalizedName = normalizeText(ch.name);
-            return normalizedName.includes('citadel') || 
-                   normalizedName.includes('the citadel') ||
-                   ch.name.toLowerCase().includes('citadel') ||
-                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
-                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
-        });
-        
-        const isInCitadel = citadelCategories.some(category => 
-            channel.parent.parentId === category.id
-        );
-        
-        if (isInCitadel) {
-            const userCitadelChannel = await global.db.getUserCitadelChannel(validator.id);
-            if (userCitadelChannel === channel.parent.id) {
-                isChamberOwner = true;
-                if (!hasPermission) {
-                    hasPermission = true;
-                    permissionType = 'Citadel channel owner';
-                }
+        const normalizedName = normalizeText(ch.name);
+        return normalizedName.includes('citadel') || 
+               normalizedName.includes('the citadel') ||
+               normalizedName.includes('chambers') ||  // NEW: Add chambers detection
+               ch.name.toLowerCase().includes('citadel') ||
+               ch.name.toLowerCase().includes('chambers') ||  // NEW: Add chambers detection
+               ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+               ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // NEW: Unicode bold chambers
+               ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+               ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // NEW: Unicode script chambers
+               ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+               ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // NEW: Unicode fraktur chambers
+    });
+    
+    const isInAllowedCategory = allowedCategories.some(category => 
+        channel.parent.parentId === category.id
+    );
+    
+    if (isInAllowedCategory) {
+        const userOwnedChannel = await global.db.getUserCitadelChannel(validator.id);
+        if (userOwnedChannel === channel.parent.id) {
+            isChamberOwner = true;
+            if (!hasPermission) {
+                hasPermission = true;
+                permissionType = 'channel owner';
             }
         }
     }
+}
     
     if (!hasPermission) {
         const embed = new EmbedBuilder()
