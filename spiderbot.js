@@ -2135,70 +2135,75 @@ async function handleFeedbackSlashCommand(interaction) {
         }
         
         // Determine who should be mentioned (thread owner or channel owner)
-        let ownerToMention = null;
-        let ownerType = '';
+let ownerToMention = null;
+let ownerType = '';
+
+// First check if this is in a Citadel OR Chambers category (for both threads and direct messages)
+const targetChannel = channel.isThread() ? channel.parent : channel;
+let isInAllowedCategory = false;
+
+if (targetChannel && targetChannel.type === 0 && targetChannel.parentId) {
+    function normalizeText(text) {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\w\s]/g, '')
+            .toLowerCase()
+            .trim();
+    }
+    
+    const allowedCategories = channel.guild.channels.cache.filter(ch => {
+        if (ch.type !== 4) return false;
         
-        // First check if this is in a Citadel category (for both threads and direct messages)
-        const targetChannel = channel.isThread() ? channel.parent : channel;
-        let isInCitadelCategory = false;
+        const normalizedName = normalizeText(ch.name);
+        return normalizedName.includes('citadel') || 
+               normalizedName.includes('the citadel') ||
+               normalizedName.includes('chambers') ||  // ADD THIS LINE
+               ch.name.toLowerCase().includes('citadel') ||
+               ch.name.toLowerCase().includes('chambers') ||  // ADD THIS LINE
+               ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+               ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // ADD THIS LINE
+               ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+               ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // ADD THIS LINE
+               ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+               ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // ADD THIS LINE
+    });
+    
+    isInAllowedCategory = allowedCategories.some(category => 
+        targetChannel.parentId === category.id
+    );
+}
+
+if (isInAllowedCategory) {
+    // In Citadel/Chambers category - always prioritize chamber owner
+    try {
+        const ownerQuery = await global.db.getRow(
+            'SELECT user_id FROM citadel_channels WHERE channel_id = ?',
+            [targetChannel.id]
+        );
         
-        if (targetChannel && targetChannel.type === 0 && targetChannel.parentId) {
-            function normalizeText(text) {
-                return text
-                    .normalize('NFD')
-                    .replace(/[\u0300-\u036f]/g, '')
-                    .replace(/[^\w\s]/g, '')
-                    .toLowerCase()
-                    .trim();
-            }
-            
-            const citadelCategories = channel.guild.channels.cache.filter(ch => {
-                if (ch.type !== 4) return false;
-                
-                const normalizedName = normalizeText(ch.name);
-                return normalizedName.includes('citadel') || 
-                       normalizedName.includes('the citadel') ||
-                       ch.name.toLowerCase().includes('citadel') ||
-                       ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
-                       ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-                       ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
-            });
-            
-            isInCitadelCategory = citadelCategories.some(category => 
-                targetChannel.parentId === category.id
-            );
+        if (ownerQuery) {
+            const channelOwner = await guild.members.fetch(ownerQuery.user_id);
+            ownerToMention = `<@${ownerQuery.user_id}>`;
+            ownerType = 'chamber owner';
+            console.log(`Found chamber owner: ${channelOwner.displayName}`);
+        } else {
+            console.log(`No chamber owner found for channel ${targetChannel.id}`);
         }
-        
-        if (isInCitadelCategory) {
-            // In Citadel category - always prioritize chamber owner
-            try {
-                const ownerQuery = await global.db.getRow(
-                    'SELECT user_id FROM citadel_channels WHERE channel_id = ?',
-                    [targetChannel.id]
-                );
-                
-                if (ownerQuery) {
-                    const channelOwner = await guild.members.fetch(ownerQuery.user_id);
-                    ownerToMention = `<@${ownerQuery.user_id}>`;
-                    ownerType = 'chamber owner';
-                    console.log(`Found Citadel chamber owner: ${channelOwner.displayName}`);
-                } else {
-                    console.log(`No chamber owner found for channel ${targetChannel.id}`);
-                }
-            } catch (error) {
-                console.log('Could not fetch chamber owner for mention:', error);
-            }
-        } else if (channel.isThread()) {
-            // Not in Citadel - mention thread owner (bookshelf-discussion, etc.)
-            try {
-                const threadOwner = await guild.members.fetch(channel.ownerId);
-                ownerToMention = `<@${channel.ownerId}>`;
-                ownerType = 'thread owner';
-                console.log(`Found thread owner: ${threadOwner.displayName}`);
-            } catch (error) {
-                console.log('Could not fetch thread owner for mention:', error);
-            }
-        }
+    } catch (error) {
+        console.log('Could not fetch chamber owner for mention:', error);
+    }
+} else if (channel.isThread()) {
+    // Not in Citadel/Chambers - mention thread owner (bookshelf-discussion, etc.)
+    try {
+        const threadOwner = await guild.members.fetch(channel.ownerId);
+        ownerToMention = `<@${channel.ownerId}>`;
+        ownerType = 'thread owner';
+        console.log(`Found thread owner: ${threadOwner.displayName}`);
+    } catch (error) {
+        console.log('Could not fetch thread owner for mention:', error);
+    }
+}
         
         const confirmEmbed = new EmbedBuilder()
             .setTitle('Feedback Logged as Pending ☝️')
