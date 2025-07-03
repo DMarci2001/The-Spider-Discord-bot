@@ -842,7 +842,6 @@ async function handleCitadelChannelSlashCommand(interaction) {
             .setTitle('📚 Citadel Chamber Created!')
             .setDescription(`Congratulations! Your personal literary chamber has been created: ${channel}`)
             .addFields(
-                { name: 'Chamber Name', value: `**${channel.name}**`, inline: true },
                 { name: 'Your New Powers', value: '• Post unlimited stories and chapters\n• Manage feedback threads\n• Full creative control of your space', inline: false }
             )
             .setColor(0xFFD700);
