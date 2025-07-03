@@ -568,7 +568,7 @@ async function createCitadelChannel(guild, userId, member, customName = null) {
 const allCategories = guild.channels.cache.filter(ch => ch.type === 4);
 await sendDebugMessage(`Found ${allCategories.size} categories: ${allCategories.map(c => `"${c.name}"`).join(', ')}`);
 
-const targetCategory = allCategories.find(ch => {
+const citadelCategory = allCategories.find(ch => {
     const normalizedName = ch.name
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
@@ -589,13 +589,13 @@ const targetCategory = allCategories.find(ch => {
            ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // NEW: Unicode fraktur chambers
 });
 
-if (!targetCategory) {
+if (!citadelCategory) {
     const errorMsg = `❌ **CITADEL/CHAMBERS CATEGORY NOT FOUND**\n\nAvailable categories:\n${allCategories.map(c => `• "${c.name}" (ID: ${c.id})`).join('\n')}\n\n**Solution**: Create a category with "citadel" or "chambers" in the name.`;
     await sendDebugMessage(errorMsg);
     throw new Error('No Citadel or Chambers category found. Please create a category containing "citadel" or "chambers" in the name.');
 }
 
-await sendDebugMessage(`✅ Found target category: **"${targetCategory.name}"** (ID: ${targetCategory.id})`);
+await sendDebugMessage(`✅ Found target category: **"${citadelCategory.name}"** (ID: ${citadelCategory.id})`);
 
         // Check bot permissions
         const botMember = guild.members.me;
