@@ -2747,7 +2747,7 @@ async function createBalanceEmbed(user, member, guild) {
     let accessLevel = '❌ **No Access** - Reach Level 5 for demo access';
     
     if (member && hasAccessToCitadelChannel(member) && checkCitadelRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments)) {
-        accessLevel = '🏰 **Citadel Channel Access** - Can create own channel';
+        accessLevel = '🏰 **Citadel Chamber Access** - Can create own chamber';
     } else if (member && hasAccessToBookshelfPosting(member) && checkBookshelfPostRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments)) {
         accessLevel = '📚 **Full Bookshelf Access** - Can post demo chapters';
     } else if (member && hasAccessToBookshelfDemo(member)) {
