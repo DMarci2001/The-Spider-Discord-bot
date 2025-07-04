@@ -1652,7 +1652,7 @@ async function sendBumpReminder() {
             
             // Send the bump reminder message with role ping
             const bumpMessage = await modOfficeChannel.send(
-                `${moderatorRole} - Time to bump the server! Use \`/bump\` to help grow our literary community. ☝️`
+                `${moderatorRole} - Time to bump the server!☝️`
             );
             
             console.log(`📢 Bump reminder sent to #${modOfficeChannel.name} in ${guild.name}`);
