@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes, StringSelectMenuBuilder, ActionRowBuilder, ComponentType, ButtonBuilder, ButtonStyle, roleMention } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder, REST, Routes, StringSelectMenuBuilder, ActionRowBuilder, ComponentType, ButtonBuilder, ButtonStyle, roleMention, channelMention } = require('discord.js');
 const fs = require('fs').promises;
 const DatabaseManager = require('./database2');
 
@@ -143,6 +143,8 @@ const FEEDBACK_TYPES = {
     COMMENT: 'comment'
 };
 
+const FEEDBACK_CONFIRMATION_TIMEOUT = 2 * 24 * 60 * 60 * 1000;
+
 const MONTHLY_FEEDBACK_REQUIREMENT = {
     // Need 2 full docs OR 4 comments OR 1 doc + 2 comments
     MIN_DOCS: 2,
@@ -159,8 +161,8 @@ const ACCESS_REQUIREMENTS = {
 
 const BOOKSHELF_DEMO_LIMIT = 2; // Max posts in demo bookshelf
 
-const MONITORED_FORUMS = ['bookshelf-discussion', 'bookshelf'];
-const ACTIVITY_MONITOR_CHANNEL = 'activity-monitor';
+const MONITORED_FORUMS = ['💬╠bookshelf-discussion', '📚╠bookshelf'];
+const ACTIVITY_MONITOR_CHANNEL = '📊╠activity-monitor';
 
 // Welcome system configuration (keeping existing)
 const WELCOME_CONFIG = {
@@ -346,7 +348,7 @@ class WelcomeSystem {
 
         const embed = new EmbedBuilder()
             .setTitle('A New Bird Joins Our Literary Nest ☝️')
-            .setDescription(`Ah, **${member.displayName}**... How delightful. Another soul seeks to join our distinguished gathering of scribes and storytellers. Please, after you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel}, use the ${channels.botStuff} channel, and trigger the \`/help\` command for further instructions!`)
+            .setDescription(`Ah, **${member.displayName}**... How delightful. Another soul seeks to join our distinguished gathering of scribes and storytellers.\n\n After you have studied our ${channels.rulesChannel} and our ${channels.serverGuideChannel} carefully, you may use the ${channels.botStuff} channel to call **my**(there are others) \`/help\` command for further instructions! Please, make sure you study our rules and guide with the utmost care, because we are going to have to say farewell if your introduction is deemed sparse. *Hint:* Look for the pinned message in ${channels.introductions}. On a final note, our server is high-commitment, so make sure you are in a position and mindset to stay active before you choose to engage!`)
             .setColor(config.color);
 
         if (config.thumbnail) {
@@ -381,7 +383,13 @@ class WelcomeSystem {
         const embed = this.createWelcomeEmbed(member);
         
         try {
-            const message = await channel.send({ embeds: [embed] });
+            const pingText = getRoleMention(member.guild, 'Welcome Wagon');
+    
+            // Send message with optional ping
+            const message = await channel.send({ 
+            content: pingText,
+            embeds: [embed] 
+        });
             
             this.logger.log(`✅ Welcome message sent for ${member.displayName} in #${channel.name}`);
             this.logger.log(`📬 Message ID: ${message.id}`);
@@ -462,14 +470,6 @@ function checkCitadelRequirementMet(docs, comments) {
     return false;
 }
 
-function checkBookshelfPostRequirementMet(docs, comments) {
-    // 2 docs OR 4 comments OR 1 doc + 2 comments (same as monthly requirement)
-    if (docs >= 2) return true;
-    if (comments >= 4) return true;
-    if (docs >= 1 && comments >= 2) return true; // ADD THIS LINE!
-    return false;
-}
-
 async function addValidatedFeedback(userId, feedbackType, validatorId, threadId) {
     return await global.db.addValidatedFeedback(userId, feedbackType, validatorId, threadId);
 }
@@ -499,6 +499,47 @@ function checkMonthlyRequirementMet(docs, comments) {
 }
 
 async function createCitadelChannel(guild, userId, member, customName = null) {
+
+    const level10Role = guild.roles.cache.find(role => role.name === 'Level 10');
+    const level15Role = guild.roles.cache.find(role => role.name === 'Level 15');
+
+    const permissionOverwrites = [
+    // Deny @everyone access by default
+    {
+        id: guild.id,
+        deny: [PermissionFlagsBits.ViewChannel]
+    },
+    // Give channel owner full permissions
+    {
+        id: userId,
+        allow: [
+            PermissionFlagsBits.ViewChannel, 
+            PermissionFlagsBits.SendMessages, 
+            PermissionFlagsBits.ReadMessageHistory, 
+            PermissionFlagsBits.ManageThreads, 
+            PermissionFlagsBits.CreatePublicThreads
+        ]
+    }
+];
+
+// Add Level 10+ viewing permissions if role exists
+    if (level10Role) {
+    permissionOverwrites.push({
+        id: level10Role.id,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+        deny: [PermissionFlagsBits.SendMessages] // Can't post directly in channel
+    });
+}
+
+// Add Level 15+ viewing permissions if role exists (in case Level 10 role doesn't cover it)
+    if (level15Role && level15Role.id !== level10Role?.id) {
+    permissionOverwrites.push({
+        id: level15Role.id,
+        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+        deny: [PermissionFlagsBits.SendMessages] // Can't post directly in channel
+    });
+}
+
     // Find a debug channel to send diagnostic info
     const debugChannel = guild.channels.cache.find(ch => 
         ch.isTextBased() && (
@@ -523,32 +564,38 @@ async function createCitadelChannel(guild, userId, member, customName = null) {
         await sendDebugMessage(`Starting channel creation for **${member.displayName}** (${userId})`);
         
         // Find Citadel category
-        const allCategories = guild.channels.cache.filter(ch => ch.type === 4);
-        await sendDebugMessage(`Found ${allCategories.size} categories: ${allCategories.map(c => `"${c.name}"`).join(', ')}`);
-        
-        const citadelCategory = allCategories.find(ch => {
-            const normalizedName = ch.name
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[^\w\s]/g, '')
-                .toLowerCase()
-                .trim();
-            
-            return normalizedName.includes('citadel') || 
-                   normalizedName.includes('the citadel') ||
-                   ch.name.toLowerCase().includes('citadel') ||
-                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
-                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
-        });
+        // Find Citadel or Chambers category
+const allCategories = guild.channels.cache.filter(ch => ch.type === 4);
+await sendDebugMessage(`Found ${allCategories.size} categories: ${allCategories.map(c => `"${c.name}"`).join(', ')}`);
 
-        if (!citadelCategory) {
-            const errorMsg = `❌ **CITADEL CATEGORY NOT FOUND**\n\nAvailable categories:\n${allCategories.map(c => `• "${c.name}" (ID: ${c.id})`).join('\n')}\n\n**Solution**: Create a category with "citadel" in the name.`;
-            await sendDebugMessage(errorMsg);
-            throw new Error('No Citadel category found. Please create a category containing "citadel" in the name.');
-        }
+const citadelCategory = allCategories.find(ch => {
+    const normalizedName = ch.name
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\w\s]/g, '')
+        .toLowerCase()
+        .trim();
+    
+    return normalizedName.includes('citadel') || 
+           normalizedName.includes('the citadel') ||
+           normalizedName.includes('chambers') ||  // NEW: Add chambers detection
+           ch.name.toLowerCase().includes('citadel') ||
+           ch.name.toLowerCase().includes('chambers') ||  // NEW: Add chambers detection
+           ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+           ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // NEW: Unicode bold chambers
+           ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+           ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // NEW: Unicode script chambers
+           ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+           ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // NEW: Unicode fraktur chambers
+});
 
-        await sendDebugMessage(`✅ Found Citadel category: **"${citadelCategory.name}"** (ID: ${citadelCategory.id})`);
+if (!citadelCategory) {
+    const errorMsg = `❌ **CITADEL/CHAMBERS CATEGORY NOT FOUND**\n\nAvailable categories:\n${allCategories.map(c => `• "${c.name}" (ID: ${c.id})`).join('\n')}\n\n**Solution**: Create a category with "citadel" or "chambers" in the name.`;
+    await sendDebugMessage(errorMsg);
+    throw new Error('No Citadel or Chambers category found. Please create a category containing "citadel" or "chambers" in the name.');
+}
+
+await sendDebugMessage(`✅ Found target category: **"${citadelCategory.name}"** (ID: ${citadelCategory.id})`);
 
         // Check bot permissions
         const botMember = guild.members.me;
@@ -582,69 +629,6 @@ async function createCitadelChannel(guild, userId, member, customName = null) {
         }
 
         await sendDebugMessage('✅ Bot permissions verified');
-
-        // Find Level 10 and Level 15 roles
-        const level10Role = guild.roles.cache.find(role => role.name === 'Level 10');
-        const level15Role = guild.roles.cache.find(role => role.name === 'Level 15');
-
-        await sendDebugMessage(`Level 10 role found: ${level10Role ? `YES - "${level10Role.name}" (ID: ${level10Role.id})` : 'NO'}`);
-        await sendDebugMessage(`Level 15 role found: ${level15Role ? `YES - "${level15Role.name}" (ID: ${level15Role.id})` : 'NO'}`);
-
-    // Build permission overwrites correctly
-    const permissionOverwrites = [
-    // Deny @everyone access by default
-    {
-        id: guild.id,
-        deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
-    },
-    // Give channel owner full permissions
-    {
-        id: userId,
-        allow: [
-            PermissionFlagsBits.ViewChannel, 
-            PermissionFlagsBits.SendMessages, 
-            PermissionFlagsBits.ReadMessageHistory, 
-            PermissionFlagsBits.ManageThreads, 
-            PermissionFlagsBits.CreatePublicThreads,
-            PermissionFlagsBits.SendMessagesInThreads,  // Can send messages in threads they create
-            PermissionFlagsBits.CreatePrivateThreads   // Sometimes needed for thread creation
-        ]
-    }
-];
-
-// Add Level 10 role permissions (can view and give feedback in threads)
-if (level10Role) {
-    permissionOverwrites.push({
-        id: level10Role.id,
-        allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.CreatePublicThreads,
-            PermissionFlagsBits.SendMessagesInThreads,  // Can send messages in threads they create
-            PermissionFlagsBits.CreatePrivateThreads   // Can create feedback threads
-        ],
-        deny: [PermissionFlagsBits.SendMessages]  // Can't post directly in main channel
-    });
-    await sendDebugMessage(`✅ Added Level 10 role permissions for viewing and feedback threads`);
-}
-
-// Add Level 15 role permissions (can view, give feedback, and create their own chambers)
-if (level15Role) {
-    permissionOverwrites.push({
-        id: level15Role.id,
-        allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.ReadMessageHistory,
-            PermissionFlagsBits.CreatePublicThreads  // Can create feedback threads
-        ],
-        deny: [PermissionFlagsBits.SendMessages]  // Can't post directly in main channel (only owner can)
-    });
-    await sendDebugMessage(`✅ Added Level 15 role permissions for viewing and feedback threads`);
-}
-
-await sendDebugMessage(`Final permission overwrites count: ${permissionOverwrites.length}`);
-
-await sendDebugMessage(`Final permission overwrites count: ${permissionOverwrites.length}`);
 
         // Generate channel name - use custom name if provided, otherwise fallback to display name
         let channelName;
@@ -686,14 +670,14 @@ await sendDebugMessage(`Final permission overwrites count: ${permissionOverwrite
 
         await sendDebugMessage('✅ Channel name available, creating channel...');
 
-        // Create the channel - FIXED: Use the permissionOverwrites variable
-        const channel = await guild.channels.create({
-            name: channelName,
-            type: 0,
-            parent: citadelCategory.id,
-            topic: `${member.displayName}'s Literary Chamber`,
-            permissionOverwrites: permissionOverwrites  // <-- FIXED: Use the variable!
-        });
+        // Create the channel
+    const channel = await guild.channels.create({
+        name: channelName,
+        type: 0,
+        parent: citadelCategory.id,
+        topic: `${member.displayName}'s Literary Chamber`,
+        permissionOverwrites: permissionOverwrites  // <-- USE THE VARIABLE WE BUILT!
+    });
 
         await sendDebugMessage(`✅ **CHANNEL CREATED SUCCESSFULLY**: ${channel} (ID: ${channel.id})`);
 
@@ -798,15 +782,9 @@ async function handleCitadelChannelSlashCommand(interaction) {
     if (!meetsCitadelRequirement) {
         const embed = new EmbedBuilder()
             .setTitle('Insufficient Validated Feedbacks ☝️')
-            .setDescription(`You need **3 doc feedbacks** OR **5 comment feedbacks** OR **2 docs + 2 comments** to create your own Citadel channel.`)
             .addFields({
                 name: 'Current Progress',
                 value: `• **Level 15**: ✅\n• **Doc Feedbacks**: ${validatedFeedbacks.docs}/3\n• **Comment Feedbacks**: ${validatedFeedbacks.comments}/5\n• **Mixed Option**: ${validatedFeedbacks.docs >= 2 && validatedFeedbacks.comments >= 2 ? '✅ 2 docs + 2 comments met' : `❌ Docs: ${validatedFeedbacks.docs}/2 | Comments: ${validatedFeedbacks.comments}/2`}`,
-                inline: false
-            },
-            {
-                name: 'Requirement Options',
-                value: '**Option 1:** 3 validated doc feedbacks\n**Option 2:** 5 validated comment feedbacks\n**Option 3:** 2 validated docs + 2 validated comments',
                 inline: false
             })
             .setColor(0xFF9900);
@@ -861,13 +839,10 @@ async function handleCitadelChannelSlashCommand(interaction) {
         
         const totalValidated = validatedFeedbacks.docs + validatedFeedbacks.comments;
         const embed = new EmbedBuilder()
-            .setTitle('📚 Citadel Channel Created!')
+            .setTitle('📚 Citadel Chamber Created!')
             .setDescription(`Congratulations! Your personal literary chamber has been created: ${channel}`)
             .addFields(
-                { name: 'Channel Name', value: `**${channel.name}**`, inline: true },
-                { name: 'Achievement Unlocked', value: `✅ **Level 15** + **${totalValidated} Validated Feedbacks**`, inline: false },
-                { name: 'Your New Powers', value: '• Post unlimited stories and chapters\n• Manage feedback threads\n• Full creative control of your space', inline: false },
-                { name: 'Next Steps', value: 'Visit your new channel to start posting your literary works!', inline: false }
+                { name: 'Your New Powers', value: '• Post unlimited stories and chapters\n• Manage feedback threads\n• Full creative control of your space', inline: false }
             )
             .setColor(0xFFD700);
         
@@ -894,6 +869,33 @@ function hasAccessToCitadelChannel(member) {
     return hasLevel; // We'll check validated feedbacks separately in the command
 }
 
+async function isCitadelChannel(channel) {
+    if (!channel || channel.type !== 0 || !channel.parentId) return false;
+    
+    function normalizeText(text) {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\w\s]/g, '')
+            .toLowerCase()
+            .trim();
+    }
+    
+    const citadelCategories = channel.guild.channels.cache.filter(ch => {
+        if (ch.type !== 4) return false;
+        
+        const normalizedName = normalizeText(ch.name);
+        return normalizedName.includes('citadel') || 
+               normalizedName.includes('the citadel') ||
+               ch.name.toLowerCase().includes('citadel') ||
+               ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+               ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+               ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+    });
+    
+    return citadelCategories.some(category => channel.parentId === category.id);
+}
+
 function hasAccessToBookshelfDemo(member) {
     return hasLevel5Role(member);
 }
@@ -904,20 +906,16 @@ function hasAccessToBookshelfPosting(member) {
 
 function hasLevel10Role(member) {
     if (!member?.roles?.cache) {
-        console.log('Invalid member object');
         return false;
     }
     
-    const hasRole = member.roles.cache.some(role => {
+    return member.roles.cache.some(role => {
         if (role.name.startsWith('Level ')) {
             const level = parseInt(role.name.split(' ')[1]);
-            return level >= 10;
+            return !isNaN(level) && level >= 10;
         }
         return false;
     });
-    
-    console.log(`${member.displayName} has Level 10+ role:`, hasRole);
-    return hasRole;
 }
 
 // ===== CHANNEL MENTION HELPER FUNCTIONS =====
@@ -928,10 +926,10 @@ function getChannelMention(guild, channelName) {
 
 function getClickableChannelMentions(guild) {
     return {
-        bookshelfDiscussion: getChannelMention(guild, 'bookshelf-discussion'),
-        bookshelf: getChannelMention(guild, 'bookshelf'),
+        bookshelfDiscussion: getChannelMention(guild, '💬╠bookshelf-discussion'),
+        bookshelf: getChannelMention(guild, '📚╠bookshelf'),
         rulesChannel: getChannelMention(guild, '📜╠rules'),
-        serverGuideChannel: getChannelMention(guild, '🗺╠server-guide'),
+        serverGuideChannel: getChannelMention(guild, '🧭╠server-guide'),
         botStuff: getChannelMention(guild, '🐤╠bot-stuff'),
         reactionRoles: getChannelMention(guild, '👑╠reaction-roles'),
         announcements: getChannelMention(guild, '📢╠announcements'),
@@ -956,11 +954,11 @@ function getRoleMention(guild, roleName) {
 
 function getClickableRoleMentions(guild) {
     return {
-        shelfOwner: getRoleMention(guild, 'Shelf Owner'),
-        reader: getRoleMention(guild, 'reader'),
         level5: getRoleMention(guild, 'Level 5'),
         level10: getRoleMention(guild, 'Level 10'),
-        level15: getRoleMention(guild, 'Level 15')
+        level15: getRoleMention(guild, 'Level 15'),
+        level30: getRoleMention(guild, 'Level 30'),
+        welcomeWagon: getRoleMention(guild, 'Welcome Wagon')
     };
 }
 
@@ -1020,6 +1018,11 @@ function getCurrentMonthKey() {
     return `${adjustedDate.getFullYear()}-${adjustedDate.getMonth()}`;
 }
 
+async function isUserPardoned(userId) {
+    const monthKey = getCurrentMonthKey();
+    return await global.db.isUserPardoned(userId, monthKey);
+}
+
 async function getUserMonthlyFeedback(userId) {
     return await global.db.getUserMonthlyFeedbackByType(userId);
 }
@@ -1072,12 +1075,12 @@ function isInAllowedFeedbackThread(channel) {
     }
     
     // RULE 1: Allow threads in bookshelf-discussion forum
-    if (channel.isThread() && channel.parent && channel.parent.name === 'bookshelf-discussion') {
+    if (channel.isThread() && channel.parent && channel.parent.name === '💬╠bookshelf-discussion') {
         console.log(`✅ Thread in bookshelf-discussion forum is allowed`);
         return true;
     }
     
-    // RULE 2: Allow threads in text channels that are inside a Citadel category
+    // RULE 2: Allow threads in text channels that are inside a Citadel OR Chambers category
     if (channel.isThread() && channel.parent && channel.parent.type === 0) {
         // Helper function to normalize Unicode text to ASCII
         function normalizeText(text) {
@@ -1089,34 +1092,39 @@ function isInAllowedFeedbackThread(channel) {
                 .trim();
         }
         
-        // Find categories that contain "citadel" in normalized form
-        const citadelCategories = channel.guild.channels.cache.filter(ch => {
+        // Find categories that contain "citadel" OR "chambers" in normalized form
+        const allowedCategories = channel.guild.channels.cache.filter(ch => {
             if (ch.type !== 4) return false; // Must be category
             
             const normalizedName = normalizeText(ch.name);
             return normalizedName.includes('citadel') || 
                    normalizedName.includes('the citadel') ||
+                   normalizedName.includes('chambers') ||  // NEW: Add chambers detection
                    ch.name.toLowerCase().includes('citadel') ||
+                   ch.name.toLowerCase().includes('chambers') ||  // NEW: Add chambers detection
                    ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') || // Unicode bold
+                   ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') || // NEW: Unicode bold chambers
                    ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') || // Unicode script
-                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');   // Unicode fraktur
+                   ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') || // NEW: Unicode script chambers
+                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||   // Unicode fraktur
+                   ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');    // NEW: Unicode fraktur chambers
         });
         
-        console.log(`   Found ${citadelCategories.size} potential Citadel categories:`);
-        citadelCategories.forEach(cat => {
+        console.log(`   Found ${allowedCategories.size} potential allowed categories:`);
+        allowedCategories.forEach(cat => {
             console.log(`     - ${cat.name} (ID: ${cat.id})`);
         });
         
-        // Check if the thread's parent channel is in any Citadel category
-        for (const [categoryId, category] of citadelCategories) {
+        // Check if the thread's parent channel is in any allowed category
+        for (const [categoryId, category] of allowedCategories) {
             if (channel.parent.parentId === categoryId) {
-                console.log(`✅ Thread in Citadel text channel (${channel.parent.name}) inside category (${category.name}) is allowed`);
+                console.log(`✅ Thread in allowed text channel (${channel.parent.name}) inside category (${category.name}) is allowed`);
                 return true;
             }
         }
     }
     
-    // RULE 3: Allow direct messages in Citadel text channels
+    // RULE 3: Allow direct messages in Citadel OR Chambers text channels
     if (!channel.isThread() && channel.type === 0 && channel.parentId) {
         // Same Unicode-aware category detection
         function normalizeText(text) {
@@ -1128,27 +1136,32 @@ function isInAllowedFeedbackThread(channel) {
                 .trim();
         }
         
-        const citadelCategories = channel.guild.channels.cache.filter(ch => {
+        const allowedCategories = channel.guild.channels.cache.filter(ch => {
             if (ch.type !== 4) return false;
             
             const normalizedName = normalizeText(ch.name);
             return normalizedName.includes('citadel') || 
                    normalizedName.includes('the citadel') ||
+                   normalizedName.includes('chambers') ||  // NEW: Add chambers detection
                    ch.name.toLowerCase().includes('citadel') ||
+                   ch.name.toLowerCase().includes('chambers') ||  // NEW: Add chambers detection
                    ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+                   ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // NEW: Unicode bold chambers
                    ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+                   ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // NEW: Unicode script chambers
+                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+                   ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // NEW: Unicode fraktur chambers
         });
         
-        for (const [categoryId, category] of citadelCategories) {
+        for (const [categoryId, category] of allowedCategories) {
             if (channel.parentId === categoryId) {
-                console.log(`✅ Direct message in Citadel text channel (${channel.name}) is allowed`);
+                console.log(`✅ Direct message in allowed text channel (${channel.name}) is allowed`);
                 return true;
             }
         }
     }
     
-    // RULE 4: Allow user-created Citadel chambers
+    // RULE 4: Allow user-created chambers (including both citadel and regular chambers)
     if ((channel.isThread() && channel.parent) || (!channel.isThread() && channel.type === 0)) {
         const targetChannel = channel.isThread() ? channel.parent : channel;
         
@@ -1163,21 +1176,26 @@ function isInAllowedFeedbackThread(channel) {
                     .trim();
             }
             
-            const citadelCategories = channel.guild.channels.cache.filter(ch => {
+            const allowedCategories = channel.guild.channels.cache.filter(ch => {
                 if (ch.type !== 4) return false;
                 
                 const normalizedName = normalizeText(ch.name);
                 return normalizedName.includes('citadel') || 
                        normalizedName.includes('the citadel') ||
+                       normalizedName.includes('chambers') ||  // NEW: Add chambers detection
                        ch.name.toLowerCase().includes('citadel') ||
+                       ch.name.toLowerCase().includes('chambers') ||  // NEW: Add chambers detection
                        ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+                       ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // NEW: Unicode bold chambers
                        ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-                       ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+                       ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // NEW: Unicode script chambers
+                       ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+                       ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // NEW: Unicode fraktur chambers
             });
             
-            for (const [categoryId, category] of citadelCategories) {
+            for (const [categoryId, category] of allowedCategories) {
                 if (targetChannel.parentId === categoryId) {
-                    console.log(`✅ User Citadel chamber (${targetChannel.name}) is allowed`);
+                    console.log(`✅ User chamber (${targetChannel.name}) is allowed`);
                     return true;
                 }
             }
@@ -1355,7 +1373,7 @@ async function sendTemporaryChannelMessage(channel, content, delay = MESSAGE_DEL
 async function closeUserBookshelfThreads(guild, userId) {
     try {
         const bookshelfForum = guild.channels.cache.find(channel => 
-            channel.name === 'bookshelf' && channel.type === 15
+            channel.name === '📚╠bookshelf' && channel.type === 15
         );
         
         if (!bookshelfForum) return 0;
@@ -1451,7 +1469,7 @@ const commands = [
         .addStringOption(option => option.setName('type').setDescription('Type of feedback to validate').setRequired(true)
             .addChoices(
                 { name: '📄 Full Google Doc Review', value: 'doc' },
-                { name: '💬 In-line Comments Only', value: 'comment' }
+                { name: '💬 In-line Comments', value: 'comment' }
             )),
     
     new SlashCommandBuilder()
@@ -1461,7 +1479,7 @@ const commands = [
     .addStringOption(option => option.setName('type').setDescription('Type of feedback to invalidate').setRequired(true)
         .addChoices(
             { name: '📄 Full Google Doc Review', value: 'doc' },
-            { name: '💬 In-line Comments Only', value: 'comment' }
+            { name: '💬 In-line Comments', value: 'comment' }
         )),
     
     new SlashCommandBuilder()
@@ -1503,7 +1521,7 @@ const commands = [
     .addStringOption(option => option.setName('type').setDescription('Type of feedback to add').setRequired(true)
         .addChoices(
             { name: '📄 Full Google Doc Review', value: 'doc' },
-            { name: '💬 In-line Comments Only', value: 'comment' }
+            { name: '💬 In-line Comments', value: 'comment' }
         ))
     .addIntegerOption(option => option.setName('amount').setDescription('Number of feedbacks to add (default: 1)').setRequired(false)),
     
@@ -1514,7 +1532,7 @@ const commands = [
     .addStringOption(option => option.setName('type').setDescription('Type of feedback to remove').setRequired(true)
         .addChoices(
             { name: '📄 Full Google Doc Review', value: 'doc' },
-            { name: '💬 In-line Comments Only', value: 'comment' },
+            { name: '💬 In-line Comments', value: 'comment' },
             { name: '🔄 Any Type (Most Recent)', value: 'any' }
         ))
     .addIntegerOption(option => option.setName('amount').setDescription('Number of feedbacks to remove (default: 1)').setRequired(false)),
@@ -1580,12 +1598,129 @@ const commands = [
 
 async function registerCommands() {
     try {
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT2_TOKEN);
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN);
         console.log('Started refreshing application (/) commands.');
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
         console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
         console.error('Error registering commands:', error);
+    }
+}
+
+// ===== BUMP REMINDER SYSTEM =====
+async function sendBumpReminder() {
+    for (const guild of client.guilds.cache.values()) {
+        try {
+            // Find the mod-office channel
+            const modOfficeChannel = guild.channels.cache.find(ch => 
+                ch.name === '💼╠mod-office' && ch.isTextBased()
+            );
+            
+            if (!modOfficeChannel) {
+                console.log(`⚠️ Mod-office channel not found in ${guild.name}`);
+                continue;
+            }
+            
+            // Find the moderator role (try multiple variations)
+            const moderatorRole = guild.roles.cache.find(role => {
+                const roleName = role.name.toLowerCase();
+                return roleName === 'moderator' || 
+                       roleName === 'moderators' || 
+                       roleName === 'mod' || 
+                       roleName === 'mods';
+            });
+            
+            if (!moderatorRole) {
+                console.log(`⚠️ Moderator role not found in ${guild.name}`);
+                // Send without ping if no role found
+                const bumpMessage = await modOfficeChannel.send(
+                    `**Moderators** - Time to bump the server! Use \`/bump\` to help grow our literary community. ☝️`
+                );
+                
+                // Delete after 2 hours
+                setTimeout(async () => {
+                    try {
+                        await bumpMessage.delete();
+                        console.log('🗑️ Deleted 2-hour-old bump reminder message (no role version)');
+                    } catch (error) {
+                        console.log('Failed to delete bump reminder message:', error.message);
+                    }
+                }, 2 * 60 * 60 * 1000);
+                
+                continue;
+            }
+            
+            // Send the bump reminder message with role ping
+            const bumpMessage = await modOfficeChannel.send(
+                `${moderatorRole} - Time to bump the server! Use \`/bump\` to help grow our literary community. ☝️`
+            );
+            
+            console.log(`📢 Bump reminder sent to #${modOfficeChannel.name} in ${guild.name}`);
+            
+            // Delete the message after 2 hours
+            setTimeout(async () => {
+                try {
+                    await bumpMessage.delete();
+                    console.log('🗑️ Deleted 2-hour-old bump reminder message');
+                } catch (error) {
+                    console.log('Failed to delete bump reminder message:', error.message);
+                }
+            }, 2 * 60 * 60 * 1000); // 2 hours in milliseconds
+            
+        } catch (error) {
+            console.error(`❌ Failed to send bump reminder in ${guild.name}:`, error);
+        }
+    }
+}
+
+function startBumpReminderInterval() {
+    // Send initial reminder after 5 minutes (to let bot fully initialize)
+    setTimeout(() => {
+        console.log('🚀 Sending initial bump reminder...');
+        sendBumpReminder();
+    }, 5 * 60 * 1000);
+    
+    // Then send every 2 hours
+    setInterval(() => {
+        console.log('⏰ Sending scheduled bump reminder...');
+        sendBumpReminder();
+    }, 2 * 60 * 60 * 1000); // 2 hours in milliseconds
+    
+    console.log('✅ Bump reminder system initialized - will remind every 2 hours');
+}
+
+// ===== MANUAL BUMP REMINDER COMMAND (Optional) =====
+// Add this to your slash commands array if you want staff to manually trigger reminders
+const manualBumpCommand = new SlashCommandBuilder()
+    .setName('send_bump_reminder')
+    .setDescription('Manually send a bump reminder to mod-office (Staff only)');
+
+// Add this to your command handlers
+async function handleSendBumpReminderSlashCommand(interaction) {
+    if (!hasStaffPermissions(interaction.member)) {
+        return await sendStaffOnlyMessage(interaction, true);
+    }
+    
+    await interaction.deferReply({ ephemeral: true });
+    
+    try {
+        await sendBumpReminder();
+        
+        const embed = new EmbedBuilder()
+            .setTitle('Bump Reminder Sent ☝️')
+            .setDescription('Manual bump reminder has been sent to all mod-office channels.')
+            .setColor(0x00AA55);
+        
+        await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error sending manual bump reminder:', error);
+        
+        const errorEmbed = new EmbedBuilder()
+            .setTitle('Bump Reminder Failed ☝️')
+            .setDescription('There was an error sending the bump reminder.')
+            .setColor(0xFF6B6B);
+        
+        await interaction.editReply({ embeds: [errorEmbed] });
     }
 }
 
@@ -1624,6 +1759,7 @@ client.once('ready', async () => {
         }
     }
     console.log('🎭 Bot fully initialized with new feedback validation system!');
+    startBumpReminderInterval();
 });
 
 client.on('guildMemberRemove', async (member) => {
@@ -1637,100 +1773,104 @@ client.on('guildBanAdd', async (ban) => {
 });
 
 // ===== THREAD CREATION HANDLER =====
+// Replace the entire threadCreate event handler section for bookshelf
 client.on('threadCreate', async (thread) => {
     if (thread.parent && MONITORED_FORUMS.includes(thread.parent.name)) {
         console.log(`📝 Thread created in monitored forum: ${thread.name} in ${thread.parent.name}`);
         await sendActivityNotification(thread.guild, 'thread_created', { thread });
     }
 
-    if (thread.parent && thread.parent.name === 'bookshelf') {
+    // FIXED BOOKSHELF POSTING REQUIREMENTS
+    if (thread.parent && thread.parent.name === '📚╠bookshelf') {
         console.log(`New bookshelf thread created: ${thread.name} by ${thread.ownerId}`);
         
         try {
             const member = await thread.guild.members.fetch(thread.ownerId);
             
-            // Check if they have demo access (Level 5+)
+            // Step 1: Check Level 5 requirement first
             if (!hasAccessToBookshelfDemo(member)) {
-                console.log(`User ${member.displayName} lacks Level 5 for demo bookshelf access`);
+                console.log(`User ${member.displayName} lacks Level 5 - deleting thread`);
                 
-                // Send DM first, then delete thread
                 try {
                     const dmChannel = await member.createDM();
                     const embed = new EmbedBuilder()
                         .setTitle('Bookshelf Thread Removed ☝️')
                         .setDescription('You need **Level 5** to access the demo bookshelf.')
-                        .addFields({
-                            name: 'How to Progress',
-                            value: 'Continue participating in server activities to reach **Level 5** status.',
-                            inline: false
-                        })
                         .setColor(0xFF9900);
-                    
                     await dmChannel.send({ embeds: [embed] });
                 } catch (dmError) {
-                    console.log('Could not send DM to user:', dmError.message);
+                    console.log('Could not send DM:', dmError.message);
                 }
                 
                 await thread.delete();
                 return;
             }
             
-            // Check if they can post (Level 10 + validated feedbacks)
-            const validatedFeedbacks = await getUserValidatedFeedbacksByType(member.id);
-            const canPost = checkBookshelfPostRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments);
-            
-            if (!hasAccessToBookshelfPosting(member) || !canPost) {
-    console.log(`User ${member.displayName} can access demo but cannot post yet`);
-    
-    // Send DM first, then delete thread
-    try {
-        const dmChannel = await member.createDM();
-        const embed = new EmbedBuilder()
-            .setTitle('Cannot Post in Bookshelf Yet ☝️')
-            .setDescription(`You can view the demo bookshelf, but need **Level 10** and **2 validated doc feedbacks OR 4 comment feedbacks OR 1 doc + 2 comment feedbacks** to post your own demo chapters.`)
-            .addFields(
-                { 
-                    name: 'Current Status', 
-                    value: `• Level 10+: ${hasAccessToBookshelfPosting(member) ? '✅' : '❌'}\n• Doc Feedbacks: ${validatedFeedbacks.docs}/2\n• Comment Feedbacks: ${validatedFeedbacks.comments}/4\n• Mixed Option: ${validatedFeedbacks.docs >= 1 && validatedFeedbacks.comments >= 2 ? '✅ 1 doc + 2 comments met' : `❌ Need 1 doc + 2 comments (currently ${validatedFeedbacks.docs} docs + ${validatedFeedbacks.comments} comments)`}`, 
-                    inline: false 
-                },
-                { 
-                    name: 'How to Progress', 
-                    value: 'Give quality feedback in the bookshelf-discussion forum and Citadel channels, then ask thread owners to validate your feedback with `/feedback_valid`.', 
-                    inline: false 
+            // Step 2: Check Level 10 requirement
+            if (!hasLevel10Role(member)) {
+                console.log(`User ${member.displayName} lacks Level 10 - deleting thread`);
+                
+                try {
+                    const dmChannel = await member.createDM();
+                    const embed = new EmbedBuilder()
+                        .setTitle('Cannot Post in Bookshelf Yet ☝️')
+                        .setDescription('You need **Level 10** to post demo chapters.')
+                        .setColor(0xFF9900);
+                    await dmChannel.send({ embeds: [embed] });
+                } catch (dmError) {
+                    console.log('Could not send DM:', dmError.message);
                 }
-            )
-            .setColor(0xFF9900);
-        
-        await dmChannel.send({ embeds: [embed] });
-    } catch (dmError) {
-        console.log('Could not send DM to user:', dmError.message);
-    }
-    
-    await thread.delete();
-    return;
-}
+                
+                await thread.delete();
+                return;
+            }
             
-            // If they can post, send a welcome message to the thread
+            // Step 3: Check validated feedback requirements
+            const validatedFeedbacks = await getUserValidatedFeedbacksByType(member.id);
+            const hasEnoughDocs = validatedFeedbacks.docs >= 2;
+            const hasEnoughComments = validatedFeedbacks.comments >= 4;
+            const hasMixedRequirement = validatedFeedbacks.docs >= 1 && validatedFeedbacks.comments >= 2;
+            
+            const meetsRequirement = hasEnoughDocs || hasEnoughComments || hasMixedRequirement;
+            
+            if (!meetsRequirement) {
+                console.log(`User ${member.displayName} lacks validated feedbacks (${validatedFeedbacks.docs}D/${validatedFeedbacks.comments}C) - deleting thread`);
+                
+                try {
+                    const dmChannel = await member.createDM();
+                    const embed = new EmbedBuilder()
+                        .setTitle('Cannot Post in Bookshelf Yet ☝️')
+                        .addFields({
+                            name: 'Current Status',
+                            value: `• Doc Feedbacks: ${validatedFeedbacks.docs}/2\n• Comment Feedbacks: ${validatedFeedbacks.comments}/4\n• Mixed Option: ${validatedFeedbacks.docs >= 1 && validatedFeedbacks.comments >= 2 ? '✅' : '❌'} (1 doc + 2 comments)`,
+                            inline: false
+                        })
+                        .setColor(0xFF9900);
+                    await dmChannel.send({ embeds: [embed] });
+                } catch (dmError) {
+                    console.log('Could not send DM:', dmError.message);
+                }
+                
+                await thread.delete();
+                return;
+            }
+            
+            // If they pass all checks, send welcome message
+            console.log(`User ${member.displayName} meets all requirements - allowing post`);
             const welcomeEmbed = new EmbedBuilder()
                 .setTitle('Welcome to the Demo Bookshelf! 📚')
-                .setDescription(`Congratulations ${member.displayName}! You can now post up to **${BOOKSHELF_DEMO_LIMIT} chapters** here.`)
-                .addFields({
-                    name: 'Next Step',
-                    value: `Reach **Level 15** and get **3 additional doc feedbacks OR 5 additional comment feedbacks** to create your own unlimited Citadel channel with \`/citadel_channel\`!`,
-                    inline: false
-                })
+                .setDescription(`Congratulations ${member.displayName}! You can post up to **${BOOKSHELF_DEMO_LIMIT} chapters** here.`)
                 .setColor(0x00AA55);
             
             await thread.send({ embeds: [welcomeEmbed] });
             
         } catch (error) {
             console.error('Error handling bookshelf thread creation:', error);
-            // If there's an error, delete the thread as a safety measure
+            // Safety measure - delete thread if there's any error
             try {
                 await thread.delete();
             } catch (deleteError) {
-                console.error('Error deleting thread after error:', deleteError);
+                console.error('Error deleting thread:', deleteError);
             }
         }
     }
@@ -1739,10 +1879,57 @@ client.on('threadCreate', async (thread) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
+    // ===== CITADEL CHANNEL RESTRICTIONS =====
+    
+    // Check direct messages in Citadel channels
+    if (message.channel.type === 0 && message.channel.parentId) {
+        const isInCitadelCategory = await isCitadelChannel(message.channel);
+        
+        if (isInCitadelCategory) {
+            // This is a direct message in a Citadel channel
+            const userCitadelChannel = await global.db.getUserCitadelChannel(message.author.id);
+            const isChannelOwner = userCitadelChannel === message.channel.id;
+            
+            if (!isChannelOwner) {
+                // Not the channel owner - delete message and notify
+                await message.delete();
+                await sendTemporaryChannelMessage(message.channel, 
+                    `Only the chamber owner can post directly in this channel, **${message.author.displayName}**! Create a feedback thread instead. ☝️`,
+                    8000
+                );
+                return;
+            }
+        }
+    }
+    
+    // Check messages in threads within Citadel channels
+    if (message.channel.isThread() && message.channel.parent) {
+        const isParentCitadelChannel = await isCitadelChannel(message.channel.parent);
+        
+        if (isParentCitadelChannel) {
+            // This is a thread in a Citadel channel
+            const userCitadelChannel = await global.db.getUserCitadelChannel(message.author.id);
+            const isChannelOwner = userCitadelChannel === message.channel.parent.id;
+            const isThreadCreator = message.channel.ownerId === message.author.id;
+            
+            if (!isChannelOwner && !isThreadCreator) {
+                // Neither channel owner nor thread creator - delete message and notify
+                await message.delete();
+                await sendTemporaryChannelMessage(message.channel, 
+                    `Only the chamber owner and thread creator can post in this feedback thread, **${message.author.displayName}**! ☝️`,
+                    8000
+                );
+                return;
+            }
+        }
+    }
+
+    // ===== REST OF EXISTING MESSAGE HANDLING =====
+    
     // Monitor feedback posting in bookshelf-discussion
     if (message.channel.isThread() && 
         message.channel.parent && 
-        message.channel.parent.name === 'bookshelf-discussion') {
+        message.channel.parent.name === '💬╠bookshelf-discussion') {
         
         console.log(`💬 Message posted in ${message.channel.parent.name}: ${message.author.displayName}`);
         
@@ -1760,7 +1947,7 @@ client.on('messageCreate', async (message) => {
     }
 
     // BOOKSHELF DEMO POSTING LIMITS - UPDATED
-    if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === 'bookshelf') {
+    if (message.channel.isThread() && message.channel.parent && message.channel.parent.name === '📚╠bookshelf') {
     
     if (message.channel.ownerId !== message.author.id) {
         await message.delete();
@@ -1912,6 +2099,7 @@ async function handleSlashCommand(interaction) {
 
 // ===== NEW FEEDBACK COMMANDS =====
 
+// ===== COMPLETE FUNCTION TO REPLACE =====
 async function handleFeedbackSlashCommand(interaction) {
     console.log(`Processing /feedback command for ${interaction.user.displayName}`);
     
@@ -2018,17 +2206,16 @@ async function handleFeedbackSlashCommand(interaction) {
     
     const commentButton = new ButtonBuilder()
         .setCustomId('feedback_comment')
-        .setLabel('💬 In-line Comments Only')
+        .setLabel('💬 In-line Comments')
         .setStyle(ButtonStyle.Secondary);
     
     const row = new ActionRowBuilder().addComponents(docButton, commentButton);
     
     const embed = new EmbedBuilder()
         .setTitle('Select Feedback Type ☝️')
-        .setDescription('What type of feedback did you provide?')
         .addFields(
             { name: '📄 Full Google Doc Review', value: 'Comprehensive feedback with detailed analysis, suggestions, and overall assessment', inline: false },
-            { name: '💬 In-line Comments Only', value: 'Quick comments and suggestions directly on the document', inline: false },
+            { name: '💬 In-line Comments', value: 'Quick comments and suggestions', inline: false },
             { name: 'Important', value: 'Your feedback will be pending until the work\'s author validates it with `/feedback_valid`', inline: false }
         )
         .setColor(0x5865F2);
@@ -2065,17 +2252,121 @@ async function handleFeedbackSlashCommand(interaction) {
             return;
         }
         
+        // Determine who should be mentioned (thread owner or channel owner)
+let ownerToMention = null;
+let ownerType = '';
+
+// First check if this is in a Citadel OR Chambers category (for both threads and direct messages)
+const targetChannel = channel.isThread() ? channel.parent : channel;
+let isInAllowedCategory = false;
+
+if (targetChannel && targetChannel.type === 0 && targetChannel.parentId) {
+    function normalizeText(text) {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\w\s]/g, '')
+            .toLowerCase()
+            .trim();
+    }
+    
+    const allowedCategories = channel.guild.channels.cache.filter(ch => {
+        if (ch.type !== 4) return false;
+        
+        const normalizedName = normalizeText(ch.name);
+        return normalizedName.includes('citadel') || 
+               normalizedName.includes('the citadel') ||
+               normalizedName.includes('chambers') ||  // ADD THIS LINE
+               ch.name.toLowerCase().includes('citadel') ||
+               ch.name.toLowerCase().includes('chambers') ||  // ADD THIS LINE
+               ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+               ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // ADD THIS LINE
+               ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+               ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // ADD THIS LINE
+               ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+               ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // ADD THIS LINE
+    });
+    
+    isInAllowedCategory = allowedCategories.some(category => 
+        targetChannel.parentId === category.id
+    );
+}
+
+if (isInAllowedCategory) {
+    // In Citadel/Chambers category - always prioritize chamber owner
+    try {
+        const ownerQuery = await global.db.getRow(
+            'SELECT user_id FROM citadel_channels WHERE channel_id = ?',
+            [targetChannel.id]
+        );
+        
+        if (ownerQuery) {
+            const channelOwner = await guild.members.fetch(ownerQuery.user_id);
+            ownerToMention = `<@${ownerQuery.user_id}>`;
+            ownerType = 'chamber owner';
+            console.log(`Found chamber owner: ${channelOwner.displayName}`);
+        } else {
+            console.log(`No chamber owner found for channel ${targetChannel.id}`);
+        }
+    } catch (error) {
+        console.log('Could not fetch chamber owner for mention:', error);
+    }
+} else if (channel.isThread()) {
+    // Not in Citadel/Chambers - mention thread owner (bookshelf-discussion, etc.)
+    try {
+        const threadOwner = await guild.members.fetch(channel.ownerId);
+        ownerToMention = `<@${channel.ownerId}>`;
+        ownerType = 'thread owner';
+        console.log(`Found thread owner: ${threadOwner.displayName}`);
+    } catch (error) {
+        console.log('Could not fetch thread owner for mention:', error);
+    }
+}
+        
         const confirmEmbed = new EmbedBuilder()
             .setTitle('Feedback Logged as Pending ☝️')
-            .setDescription(`Your **${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}** feedback has been logged and is awaiting validation.`)
             .addFields(
-                { name: 'Next Step', value: 'The chamber owner or thread creator must use `/feedback_valid` to confirm your feedback type and quality.', inline: false },
-                { name: 'Status', value: '⏳ **Pending Validation**', inline: true },
-                { name: 'Type', value: feedbackType === 'doc' ? '📄 Full Document' : '💬 In-line Comments', inline: true }
+                { name: 'Next Step', value: `The ${ownerType || 'chamber owner or thread creator'} must use \`/feedback_valid\` to confirm the feedback type and quality.`, inline: false },
+                { name: 'Type', value: feedbackType === 'doc' ? '📄 Full Document' : '💬 In-line Comments', inline: true },
+                { name: 'Feedback Giver', value: `**${interaction.user.displayName}**`, inline: true }
             )
             .setColor(0xFF9900);
         
-        await buttonInteraction.update({ embeds: [confirmEmbed], components: [] });
+        // Send public confirmation message to the channel
+        const publicConfirmation = await channel.send({ embeds: [confirmEmbed] });
+        
+        // Send separate ping message if we have someone to mention
+        let pingMessage = null;
+        if (ownerToMention) {
+            pingMessage = await channel.send(`${ownerToMention}`);
+            
+            // Also set up timeout for the ping message
+            setTimeout(async () => {
+                try { 
+                    await pingMessage.delete(); 
+                    console.log('Successfully deleted 2-day-old feedback ping message');
+                } catch (error) { 
+                    console.log('Failed to delete feedback ping message:', error.message); 
+                }
+            }, FEEDBACK_CONFIRMATION_TIMEOUT);
+        }
+        
+        // Set up 2-day deletion timeout
+        setTimeout(async () => {
+            try { 
+                await publicConfirmation.delete(); 
+                console.log('Successfully deleted 2-day-old feedback confirmation message');
+            } catch (error) { 
+                console.log('Failed to delete feedback confirmation message:', error.message); 
+            }
+        }, FEEDBACK_CONFIRMATION_TIMEOUT);
+        
+        // Update the original ephemeral interaction to acknowledge the button click
+        const privateUpdateEmbed = new EmbedBuilder()
+            .setTitle('Feedback logged!☝️')
+            .setColor(0x00AA55);
+        
+        await buttonInteraction.update({ embeds: [privateUpdateEmbed], components: [] });
         
         // Send activity notification
         try {
@@ -2139,7 +2430,7 @@ async function handleFeedbackValidSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    // ENHANCED PERMISSION CHECK: Thread owner OR Citadel channel owner
+    // ENHANCED PERMISSION CHECK: Thread owner OR Citadel/Chambers channel owner
     let hasPermission = false;
     let permissionType = '';
     
@@ -2148,9 +2439,9 @@ async function handleFeedbackValidSlashCommand(interaction) {
         hasPermission = true;
         permissionType = 'thread owner';
     }
-    // Check if this is a Citadel channel thread and user owns the Citadel channel
+    // Check if this is a Citadel/Chambers channel thread and user owns the channel
     else if (channel.parent && channel.parent.type === 0) {
-        // Check if parent channel is in a Citadel category and user owns it
+        // Check if parent channel is in a Citadel or Chambers category and user owns it
         function normalizeText(text) {
             return text
                 .normalize('NFD')
@@ -2160,29 +2451,34 @@ async function handleFeedbackValidSlashCommand(interaction) {
                 .trim();
         }
         
-        const citadelCategories = channel.guild.channels.cache.filter(ch => {
+        const allowedCategories = channel.guild.channels.cache.filter(ch => {
             if (ch.type !== 4) return false;
             
             const normalizedName = normalizeText(ch.name);
             return normalizedName.includes('citadel') || 
                    normalizedName.includes('the citadel') ||
+                   normalizedName.includes('chambers') ||  // NEW: Add chambers detection
                    ch.name.toLowerCase().includes('citadel') ||
+                   ch.name.toLowerCase().includes('chambers') ||  // NEW: Add chambers detection
                    ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+                   ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // NEW: Unicode bold chambers
                    ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
+                   ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // NEW: Unicode script chambers
+                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+                   ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // NEW: Unicode fraktur chambers
         });
         
-        // Check if this thread's parent channel is in a Citadel category
-        const isInCitadel = citadelCategories.some(category => 
+        // Check if this thread's parent channel is in any allowed category
+        const isInAllowedCategory = allowedCategories.some(category => 
             channel.parent.parentId === category.id
         );
         
-        if (isInCitadel) {
-            // Check if the validator owns this Citadel channel
-            const userCitadelChannel = await global.db.getUserCitadelChannel(validator.id);
-            if (userCitadelChannel === channel.parent.id) {
+        if (isInAllowedCategory) {
+            // Check if the validator owns this channel
+            const userOwnedChannel = await global.db.getUserCitadelChannel(validator.id);
+            if (userOwnedChannel === channel.parent.id) {
                 hasPermission = true;
-                permissionType = 'Citadel channel owner';
+                permissionType = 'chamber owner';
             }
         }
     }
@@ -2193,7 +2489,7 @@ async function handleFeedbackValidSlashCommand(interaction) {
             .setDescription('You can only validate feedback in:')
             .addFields({
                 name: 'Permitted Actions',
-                value: '• Threads you created\n• Threads in your own Citadel channel',
+                value: '• Threads you created\n• Threads in your own chamber',
                 inline: false
             })
             .setColor(0xFF9900);
@@ -2239,64 +2535,64 @@ async function handleFeedbackValidSlashCommand(interaction) {
     const newDocs = feedbackType === 'doc' ? monthlyFeedback.docs + 1 : monthlyFeedback.docs;
     const newComments = feedbackType === 'comment' ? monthlyFeedback.comments + 1 : monthlyFeedback.comments;
         
-        // Check if they now meet monthly requirements
-        const meetingRequirement = checkMonthlyRequirementMet(newDocs, newComments);
-        const validatedCount = await getUserValidatedFeedbacks(feedbackGiver.id);
-        
-        // Check if they've unlocked new access levels
-        let unlockedAccess = '';
-        const member = await guild.members.fetch(feedbackGiver.id);
-        
-        if (hasLevel15Role(member) && checkCitadelRequirementMet(newDocs, newComments)) {
-            // Check if they already have a citadel channel
-            const existingChannel = await global.db.getUserCitadelChannel(feedbackGiver.id);
-            if (!existingChannel) {
-                unlockedAccess = '\n🏰 **NEW ACCESS UNLOCKED:** You can now create your own Citadel channel with `/citadel_channel`!';
-            }
-        } else if (hasLevel10Role(member) && checkBookshelfPostRequirementMet(newDocs, newComments)) {
-            unlockedAccess = '\n📚 **NEW ACCESS UNLOCKED:** You can now post demo chapters in the bookshelf!';
+    // Check if they now meet monthly requirements
+    const meetingRequirement = checkMonthlyRequirementMet(newDocs, newComments);
+    const validatedCount = await getUserValidatedFeedbacks(feedbackGiver.id);
+    
+    // Check if they've unlocked new access levels
+    let unlockedAccess = '';
+    const member = await guild.members.fetch(feedbackGiver.id);
+    
+    if (hasLevel15Role(member) && checkCitadelRequirementMet(newDocs, newComments)) {
+        // Check if they already have a citadel channel
+        const existingChannel = await global.db.getUserCitadelChannel(feedbackGiver.id);
+        if (!existingChannel) {
+            unlockedAccess = '\n🏰 **NEW ACCESS UNLOCKED:** You can now create your own chamber with `/citadel_channel`!';
         }
-        
-        const embed = new EmbedBuilder()
-            .setTitle('✅ Feedback Validated!')
+    } else if (hasLevel10Role(member) && checkBookshelfPostRequirementMet(newDocs, newComments)) {
+        unlockedAccess = '\n📚 **NEW ACCESS UNLOCKED:** You can now post demo chapters in the bookshelf!';
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('✅ Feedback Validated!')
+        .setColor(0x00FF00);
+    
+    if (unlockedAccess) {
+        embed.addFields({ name: 'Achievement Unlocked!', value: unlockedAccess.trim(), inline: false });
+    }
+    
+    await replyTemporary(interaction, { embeds: [embed], ephemeral: true }, 8000);
+    
+    // Send notification to feedback giver
+    try {
+        const dmChannel = await feedbackGiver.createDM();
+        const dmEmbed = new EmbedBuilder()
+            .setTitle('✅ Your Feedback Was Validated!')
+            .setDescription(`Your **${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}** feedback in **${channel.name}** has been validated by the ${permissionType}.`)
+            .addFields(
+                { name: 'Monthly Progress', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
+                { name: 'Requirement Status', value: meetingRequirement ? '✅ Monthly requirement met!' : `❌ Need: 2 docs OR 4 comments OR 1 doc + 2 comments`, inline: false },
+                { name: 'Total Validated', value: `${validatedCount} feedbacks`, inline: true }
+            )
             .setColor(0x00FF00);
         
         if (unlockedAccess) {
-            embed.addFields({ name: 'Achievement Unlocked!', value: unlockedAccess.trim(), inline: false });
+            dmEmbed.addFields({ name: 'New Access!', value: unlockedAccess.trim(), inline: false });
         }
         
-        await replyTemporary(interaction, { embeds: [embed], ephemeral: true }, 8000);
-        
-        // Send notification to feedback giver
-        try {
-            const dmChannel = await feedbackGiver.createDM();
-            const dmEmbed = new EmbedBuilder()
-                .setTitle('✅ Your Feedback Was Validated!')
-                .setDescription(`Your **${feedbackType === 'doc' ? 'Full Google Doc Review' : 'In-line Comments'}** feedback in **${channel.name}** has been validated by the ${permissionType}.`)
-                .addFields(
-                    { name: 'Monthly Progress', value: `📄 Docs: ${newDocs} | 💬 Comments: ${newComments}`, inline: false },
-                    { name: 'Requirement Status', value: meetingRequirement ? '✅ Monthly requirement met!' : `❌ Need: 2 docs OR 4 comments OR 1 doc + 2 comments`, inline: false },
-                    { name: 'Total Validated', value: `${validatedCount} feedbacks`, inline: true }
-                )
-                .setColor(0x00FF00);
-            
-            if (unlockedAccess) {
-                dmEmbed.addFields({ name: 'New Access!', value: unlockedAccess.trim(), inline: false });
-            }
-            
-            await dmChannel.send({ embeds: [dmEmbed] });
-        } catch (dmError) {
-            console.log('Could not send DM to feedback giver:', dmError.message);
-        }
-        
-        // Send activity notification
-        await sendActivityNotification(guild, 'feedback_validated', {
-            thread: channel,
-            validatorId: validator.id,
-            feedbackGiverId: feedbackGiver.id,
-            feedbackType: feedbackType,
-            messageUrl: `https://discord.com/channels/${guild.id}/${channel.id}`
-        });
+        await dmChannel.send({ embeds: [dmEmbed] });
+    } catch (dmError) {
+        console.log('Could not send DM to feedback giver:', dmError.message);
+    }
+    
+    // Send activity notification
+    await sendActivityNotification(guild, 'feedback_validated', {
+        thread: channel,
+        validatorId: validator.id,
+        feedbackGiverId: feedbackGiver.id,
+        feedbackType: feedbackType,
+        messageUrl: `https://discord.com/channels/${guild.id}/${channel.id}`
+    });
 }
 
 async function handleFeedbackInvalidSlashCommand(interaction) {
@@ -2347,43 +2643,48 @@ async function handleFeedbackInvalidSlashCommand(interaction) {
     }
     
     // Check if this is a Citadel channel thread and user owns the Citadel channel
-    if (channel.parent && channel.parent.type === 0) {
-        function normalizeText(text) {
-            return text
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[^\w\s]/g, '')
-                .toLowerCase()
-                .trim();
-        }
+if (channel.parent && channel.parent.type === 0) {
+    function normalizeText(text) {
+        return text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\w\s]/g, '')
+            .toLowerCase()
+            .trim();
+    }
+    
+    const allowedCategories = channel.guild.channels.cache.filter(ch => {
+        if (ch.type !== 4) return false;
         
-        const citadelCategories = channel.guild.channels.cache.filter(ch => {
-            if (ch.type !== 4) return false;
-            
-            const normalizedName = normalizeText(ch.name);
-            return normalizedName.includes('citadel') || 
-                   normalizedName.includes('the citadel') ||
-                   ch.name.toLowerCase().includes('citadel') ||
-                   ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
-                   ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
-                   ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩');
-        });
-        
-        const isInCitadel = citadelCategories.some(category => 
-            channel.parent.parentId === category.id
-        );
-        
-        if (isInCitadel) {
-            const userCitadelChannel = await global.db.getUserCitadelChannel(validator.id);
-            if (userCitadelChannel === channel.parent.id) {
-                isChamberOwner = true;
-                if (!hasPermission) {
-                    hasPermission = true;
-                    permissionType = 'Citadel channel owner';
-                }
+        const normalizedName = normalizeText(ch.name);
+        return normalizedName.includes('citadel') || 
+               normalizedName.includes('the citadel') ||
+               normalizedName.includes('chambers') ||  // NEW: Add chambers detection
+               ch.name.toLowerCase().includes('citadel') ||
+               ch.name.toLowerCase().includes('chambers') ||  // NEW: Add chambers detection
+               ch.name.includes('𝐂𝐢𝐭𝐚𝐝𝐞𝐥') ||
+               ch.name.includes('𝐂𝐡𝐚𝐦𝐛𝐞𝐫𝐬') ||  // NEW: Unicode bold chambers
+               ch.name.includes('𝒞𝒾𝓉𝒶𝒹𝑒𝓁') ||
+               ch.name.includes('𝒞𝒽𝒶𝓂𝒷𝑒𝓇𝓈') ||  // NEW: Unicode script chambers
+               ch.name.includes('ℭ𝔦𝔱𝔞𝔡𝔢𝔩') ||
+               ch.name.includes('ℭ𝔥𝔞𝔪𝔟𝔢𝔯𝔰');     // NEW: Unicode fraktur chambers
+    });
+    
+    const isInAllowedCategory = allowedCategories.some(category => 
+        channel.parent.parentId === category.id
+    );
+    
+    if (isInAllowedCategory) {
+        const userOwnedChannel = await global.db.getUserCitadelChannel(validator.id);
+        if (userOwnedChannel === channel.parent.id) {
+            isChamberOwner = true;
+            if (!hasPermission) {
+                hasPermission = true;
+                permissionType = 'chamber owner';
             }
         }
     }
+}
     
     if (!hasPermission) {
         const embed = new EmbedBuilder()
@@ -2564,7 +2865,7 @@ async function createBalanceEmbed(user, member, guild) {
     let accessLevel = '❌ **No Access** - Reach Level 5 for demo access';
     
     if (member && hasAccessToCitadelChannel(member) && checkCitadelRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments)) {
-        accessLevel = '🏰 **Citadel Channel Access** - Can create own channel';
+        accessLevel = '🏰 **Citadel Chamber Access** - Can create own chamber';
     } else if (member && hasAccessToBookshelfPosting(member) && checkBookshelfPostRequirementMet(validatedFeedbacks.docs, validatedFeedbacks.comments)) {
         accessLevel = '📚 **Full Bookshelf Access** - Can post demo chapters';
     } else if (member && hasAccessToBookshelfDemo(member)) {
@@ -2744,9 +3045,9 @@ async function handleHallOfFameSlashCommand(interaction) {
 async function createHallOfFameEmbed(guild) {
     try {
         // Get top contributors by feedback type
-        const topDocContributors = await getTopContributorsByType('doc', 5);
-        const topCommentContributors = await getTopContributorsByType('comment', 5);
-        const topOverallContributors = await global.db.getTopContributors(5);
+        const topDocContributors = await getTopContributorsByType('doc', 11);
+        const topCommentContributors = await getTopContributorsByType('comment', 11);
+        const topOverallContributors = await global.db.getTopContributors(11);
         
         if (topOverallContributors.length === 0) {
             return new EmbedBuilder()
@@ -2763,7 +3064,7 @@ async function createHallOfFameEmbed(guild) {
                 const member = await guild.members.fetch(contributor.user_id);
                 const rank = i + 1;
                 const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
-                docLeaderboard += `${medal} **${member.displayName}** - ${contributor.doc_count} doc${contributor.doc_count !== 1 ? 's' : ''}\n`;
+                docLeaderboard += `${medal} ${member.displayName} - ${contributor.doc_count} doc${contributor.doc_count !== 1 ? 's' : ''}\n`;
             } catch (error) {
                 continue;
             }
@@ -2777,7 +3078,7 @@ async function createHallOfFameEmbed(guild) {
                 const member = await guild.members.fetch(contributor.user_id);
                 const rank = i + 1;
                 const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
-                commentLeaderboard += `${medal} **${member.displayName}** - ${contributor.comment_count} comment${contributor.comment_count !== 1 ? 's' : ''}\n`;
+                commentLeaderboard += `${medal} ${member.displayName} - ${contributor.comment_count} comment${contributor.comment_count !== 1 ? 's' : ''}\n`;
             } catch (error) {
                 continue;
             }
@@ -2794,7 +3095,7 @@ async function createHallOfFameEmbed(guild) {
                 
                 // Get detailed breakdown for this user
                 const userFeedback = await getUserValidatedFeedbacksByType(contributor.user_id);
-                overallLeaderboard += `${medal} **${member.displayName}** - ${contributor.total_feedback_all_time} total (${userFeedback.docs}D/${userFeedback.comments}C)\n`;
+                overallLeaderboard += `${medal} ${member.displayName} - ${contributor.total_feedback_all_time} total (${userFeedback.docs}D/${userFeedback.comments}C)\n`;
             } catch (error) {
                 continue;
             }
@@ -2869,7 +3170,7 @@ function createHelpEmbed(guild) {
         .addFields(
             { 
                 name: '📝 How to Give & Log Feedback', 
-                value: `**Step 1:** Give thoughtful feedback in ${channels.bookshelfDiscussion} or Citadel channels. The in-line comment option also entails general discussion of plot, character, etc. outside of a document.\n**Step 2:** Use \`/feedback\` and select your feedback type\n**Step 3:** Wait for the author to validate it`, 
+                value: `**Step 1:** Give thoughtful feedback *under the threads* in ${channels.bookshelfDiscussion} or create a thread yourself in Citadel chambers(**See: ${channels.serverGuideChannel}**). While the Full Google Doc Review entails creating a Google Document where you answer all the prompting questions of the author in detail (plus your opinion on matters outside of the questions' scope, *if asked*), the In-line Comment option is about answering *some* of the questions, or - again, if the author *gives their nod to it* - general discussion of plot, character, etc. *outside* of a document. As a rule of thumb, you send the latter directly into the ${channels.bookshelfDiscussion} or Citadel chamber thread, though you may create a Doc for it, if you wish to.\n**Step 2:** Type \`/feedback\` into the chatbox and select your feedback type\n**Step 3:** Wait for the author to validate it`, 
                 inline: false 
             },
             { 
@@ -2901,92 +3202,40 @@ async function handleStatsSlashCommand(interaction) {
         return await replyTemporary(interaction, { embeds: [embed], ephemeral: true });
     }
     
-    await interaction.deferReply();
-    
-    try {
-        // Send initial debug message
-        await interaction.editReply('🔍 **DEBUG**: Starting stats command...');
-        
-        const embed = await createStatsEmbedDebug(interaction);
-        
-        await interaction.editReply({ content: '✅ **DEBUG**: Stats completed!', embeds: [embed] });
-        
-    } catch (error) {
-        // Send detailed error info to Discord
-        const errorEmbed = new EmbedBuilder()
-            .setTitle('Stats Command Debug Error')
-            .setDescription(`\`\`\`${error.message}\`\`\``)
-            .addFields({
-                name: 'Error Stack',
-                value: `\`\`\`${error.stack?.substring(0, 1000) || 'No stack trace'}\`\`\``,
-                inline: false
-            })
-            .setColor(0xFF6B6B);
-            
-        await interaction.editReply({ content: '❌ **ERROR OCCURRED**', embeds: [errorEmbed] });
-    }
+    const embed = await createStatsEmbed(interaction.guild);
+    await replyTemporary(interaction, { embeds: [embed] });
 }
 
-// Create a debug version that sends messages to Discord:
-async function createStatsEmbedDebug(interaction) {
-    const guild = interaction.guild;
-    
-    await interaction.editReply('🔍 **DEBUG**: Getting total members...');
+async function createStatsEmbed(guild) {
     const totalMembers = guild.memberCount;
     
-    await interaction.editReply(`🔍 **DEBUG**: Total members: ${totalMembers}. Getting month key...`);
-    const monthKey = getCurrentMonthKey();
-    
-    await interaction.editReply(`🔍 **DEBUG**: Month key: ${monthKey}. Finding Level 5 members...`);
+    // Get all Level 5 members
     const level5Members = guild.members.cache.filter(member => hasLevel5Role(member));
     const totalLevel5 = level5Members.size;
-    
-    await interaction.editReply(`🔍 **DEBUG**: Found ${totalLevel5} Level 5 members. Processing each member...`);
-    
-    if (totalLevel5 === 0) {
-        return new EmbedBuilder()
-            .setTitle('No Level 5 Members Found')
-            .setDescription('No Level 5+ members found to process.')
-            .setColor(0xFF9900);
-    }
     
     let monthlyContributors = 0;
     let fulfillmentList = '';
     let nonFulfillmentList = '';
     let pardonedList = '';
     let pardonedCount = 0;
-    let processedCount = 0;
     
-    // Process each member with debug updates
+    // Process each member with new feedback system
     for (const [userId, member] of level5Members) {
-        processedCount++;
+        const monthlyFeedback = await getUserMonthlyFeedbackByType(userId);
+        const meetingRequirement = checkMonthlyRequirementMet(monthlyFeedback.docs, monthlyFeedback.comments);
+        const isPardoned = await isUserPardoned(userId);
+        const status = meetingRequirement ? '✅' : '❌';
         
-        if (processedCount % 5 === 0) {
-            await interaction.editReply(`🔍 **DEBUG**: Processing member ${processedCount}/${totalLevel5}...`);
-        }
-        
-        try {
-            const monthlyFeedback = await getUserMonthlyFeedbackByType(userId);
-            const meetingRequirement = checkMonthlyRequirementMet(monthlyFeedback.docs, monthlyFeedback.comments);
-            const isPardoned = await global.db.isUserPardoned(userId, monthKey);
-            const status = meetingRequirement ? '✅' : '❌';
-            
-            if (meetingRequirement) {
-                monthlyContributors++;
-                fulfillmentList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
-            } else if (isPardoned) {
-                pardonedCount++;
-                pardonedList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C) - *Pardoned*\n`;
-            } else {
-                nonFulfillmentList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
-            }
-        } catch (memberError) {
-            await interaction.editReply(`❌ **ERROR** processing ${member.displayName}: ${memberError.message}`);
-            throw memberError;
+        if (meetingRequirement) {
+            monthlyContributors++;
+            fulfillmentList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
+        } else if (isPardoned) {
+            pardonedCount++;
+            pardonedList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C) - *Pardoned*\n`;
+        } else {
+            nonFulfillmentList += `${status} **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
         }
     }
-    
-    await interaction.editReply(`🔍 **DEBUG**: Processed all members. Building final embed...`);
     
     const contributionRate = totalLevel5 > 0 ? Math.round((monthlyContributors / totalLevel5) * 100) : 0;
     
@@ -3041,7 +3290,7 @@ async function handleFeedbackAddSlashCommand(interaction) {
     // Create a more descriptive embed
     const typeDisplay = feedbackType === 'doc' ? '📄 Full Google Doc Review' : '💬 In-line Comments';
     const embed = new EmbedBuilder()
-        .setTitle('Validated Feedbacks Added ☝️')
+        .setTitle('Feedback Added ☝️')
         .setDescription(`Added **${amount}** validated **${typeDisplay}** feedback${amount !== 1 ? 's' : ''} to ${user.displayName}'s record.`)
         .setColor(0x00AA55);
     
@@ -3306,11 +3555,6 @@ async function handlePardonSlashCommand(interaction) {
     
     const embed = new EmbedBuilder()
         .setTitle('Pardon Granted ☝️')
-        .setDescription(`${user.displayName} has been pardoned from this month's feedback requirements.`)
-        .addFields(
-            { name: 'Pardon Type', value: reasonDisplay, inline: true },
-            { name: 'New Requirement', value: 'Pardoned members are exempt from: **2 docs** OR **4 comments** OR **1 doc + 2 comments**', inline: false }
-        )
         .setColor(0x00AA55);
     
     await replyTemporary(interaction, { embeds: [embed] });
@@ -3329,7 +3573,6 @@ async function handleUnpardonSlashCommand(interaction) {
     if (success) {
         const embed = new EmbedBuilder()
             .setTitle('Pardon Revoked ☝️')
-            .setDescription(`The clemency granted to **${user.displayName}** has been rescinded.`)
             .setColor(0xFF6B6B);
         
         await replyTemporary(interaction, { embeds: [embed] });
@@ -3364,10 +3607,10 @@ async function handlePardonedLastMonthSlashCommand(interaction) {
     for (const record of pardonedUsers.slice(0, 20)) {
         try {
             const member = await interaction.guild.members.fetch(record.user_id);
-            const reasonDisplay = record.reason === 'late_joiner' ? '🕐' : '👑';
+            const reasonDisplay = record.reason === 'late_joiner' ? '🕐' : '✅';
             pardonList += `${reasonDisplay} **${member.displayName}**\n`;
         } catch (error) {
-            pardonList += `${record.reason === 'late_joiner' ? '🕐' : '👑'} *[Left Server]*\n`;
+            pardonList += `${record.reason === 'late_joiner' ? '🕐' : '✅'} *[Left Server]*\n`;
         }
     }
     
@@ -3379,7 +3622,7 @@ async function handlePardonedLastMonthSlashCommand(interaction) {
             inline: false
         })
         .setColor(0x00AA55)
-        .setFooter({ text: '👑 = Staff Discretion • 🕐 = Late Joiner' });
+        .setFooter({ text: '✅ = Staff Discretion • 🕐 = Late Joiner' });
     
     await replyTemporary(interaction, { embeds: [embed] });
 }
@@ -3426,33 +3669,73 @@ async function handlePurgeListSlashCommand(interaction) {
 
 async function createPurgeListEmbed(guild) {
     const allMembers = await guild.members.fetch();
-    const level5Members = allMembers.filter(member => hasLevel5Role(member));
     
     let purgeList = '';
-    let purgeCount = 0;
+    let safeList = '';
+    let protectedList = '';
     
-    for (const [userId, member] of level5Members) {
-        const monthlyFeedback = await getUserMonthlyFeedbackByType(userId);
-        const isPardoned = await global.db.isUserPardoned(userId, monthKey);
-        const meetingRequirement = checkMonthlyRequirementMet(monthlyFeedback.docs, monthlyFeedback.comments);
+    let purgeCount = 0;
+    let safeCount = 0;
+    let belowLevel5Count = 0;
+    let protectedCount = 0;
+    
+    // Get current month key once
+    const monthKey = getCurrentMonthKey();
+    
+    for (const [userId, member] of allMembers) {
+        // Skip bots
+        if (member.user.bot) continue;
         
-        if (!meetingRequirement && !isPardoned && !isProtectedFromPurge(member)) {
-            purgeCount++;
-            if (purgeList.length < 900) {
+        // Check if member is protected from purge (staff/admin)
+        if (isProtectedFromPurge(member)) {
+            protectedCount++;
+            protectedList += `🛡️ **${member.displayName}** - Staff/Admin\n`;
+            continue;
+        }
+        
+        // Check if member has Level 5+ (subject to monthly requirements)
+        if (hasLevel5Role(member)) {
+            const monthlyFeedback = await getUserMonthlyFeedbackByType(userId);
+            const isPardoned = await global.db.isUserPardoned(userId, monthKey);
+            const meetingRequirement = checkMonthlyRequirementMet(monthlyFeedback.docs, monthlyFeedback.comments);
+            
+            if (meetingRequirement || isPardoned) {
+                // Actually safe - either meeting requirements or pardoned
+                safeCount++;
+                if (isPardoned) {
+                    safeList += `🔔 **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C) - *Pardoned*\n`;
+                } else {
+                    safeList += `✅ **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
+                }
+            } else {
+                // Level 5+ member who would be purged - not meeting requirements and not pardoned
+                purgeCount++;
                 purgeList += `❌ **${member.displayName}** (${monthlyFeedback.docs}D/${monthlyFeedback.comments}C)\n`;
             }
+        } else {
+            // Below Level 5 - not subject to monthly feedback requirements
+            purgeCount++;
+            purgeList += `❌ **${member.displayName}**\n`;
         }
     }
     
     const embed = new EmbedBuilder()
-        .setTitle('Monthly Purge List ☝️')
-        .addFields({
+        .setTitle('Complete Monthly Purge Analysis ☝️')
+        .setDescription(`**Total Members**: ${allMembers.size - allMembers.filter(m => m.user.bot).size} (excluding bots)`)
+        .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55);
+    
+    // Add purge list (Level 5+ not meeting requirements)
+    if (purgeCount > 0) {
+        embed.addFields({
             name: `🔥 To be Purged (${purgeCount})`,
             value: purgeList || '• None scheduled for purge',
             inline: false
-        })
-        .setColor(purgeCount > 0 ? 0xFF4444 : 0x00AA55)
-        .setFooter({ text: 'Monthly requirement: 2 docs OR 4 comments OR 1 doc + 2 comments' });
+        });
+    }
+    
+    embed.setFooter({ 
+        text: `Monthly requirement: 2 docs OR 4 comments OR 1 doc + 2 comments • Only Level 5+ subject to purge requirements • (D=Docs, C=Comments)` 
+    });
     
     return embed;
 }
@@ -3728,12 +4011,12 @@ async function postServerGuide(channel) {
             },
             {
                 name: '📚 The Citadel',
-                value: `**${roles.level5}** required for all feedback activities:\n${channels.bookshelfDiscussion} - Give thorough critique and use \`/feedback\` to log contributions\n${channels.bookshelf} - Demo area for **${roles.level10}** members(2 posts max)\n• Personal channels**(NAMED AFTER OWN USERNAME)** for **${roles.level15}** members`,
+                value: `**${roles.level5}** required for all feedback activities:\n${channels.bookshelfDiscussion} - Give thorough critique and use \`/feedback\` to log contributions\n${channels.bookshelf} - Demo area for **${roles.level10}** members(2 posts max)\n• Personal channels**(NAMED AFTER OWN USERNAME)** for **${roles.level15}** members ⚠️ You must make your own thread in the appropriate chamber. You won't be able to post messages in the channel itself, only the threads you made. **See the images below for more details!**`,
                 inline: false
             },
             {
                 name: '🎯 Progression System',
-                value: `• **${roles.level5}**: Access feedback forums\n• **${roles.level10}** + 2 Google Doc OR 4 comment OR 1 Doc and 1 comment feedbacks: Post 2 demo chapters\n• **${roles.level15}** + 3 additional Doc OR 6 comment OR 1 comment and 4 Docs OR 2 comment and 2 Docs feedbacks: Own unlimited Citadel channel\n\n**⚠️ Monthly requirement**: 2 doc feedbacks OR 4 comment feedbacks OR 1 doc + 2 comments\n**⚠️ Important note:** You must read(not necessarily provide feedback) all previous chapters posted for context before providing Google Doc feedback. In-line comments are allowed without having read previous chpaters.`,
+                value: `• **${roles.level5}**: Access feedback forums\n• **${roles.level10}** + 2 Google Doc OR 4 comment OR 1 Doc and 1 comment feedbacks: Post 2 demo chapters\n• **${roles.level15}** + 3 additional Doc OR 6 comment OR 1 comment and 4 Docs OR 2 comment and 2 Docs feedbacks: Own unlimited Citadel channel\n\n**⚠️ Monthly requirement**: 2 doc feedbacks OR 4 comment feedbacks OR 1 doc + 2 comments\n**⚠️ Important note:** You must read(not necessarily provide feedback) all previous chapters posted for context before providing Google Doc feedback. In-line comments are allowed without having read previous chapters.`,
                 inline: false
             }
         )
@@ -4003,7 +4286,7 @@ async function sendStaffOnlyMessage(target, isInteraction = false) {
 }
 
 // ===== BOT LOGIN =====
-client.login(process.env.DISCORD_BOT2_TOKEN);
+client.login(process.env.DISCORD_BOT_TOKEN);
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
