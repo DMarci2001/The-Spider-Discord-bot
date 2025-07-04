@@ -498,6 +498,14 @@ function checkMonthlyRequirementMet(docs, comments) {
     return false;
 }
 
+function checkBookshelfPostRequirementMet(docs, comments) {
+    // 2 docs OR 4 comments OR 1 doc + 2 comments (same as monthly requirement)
+    if (docs >= 2) return true;
+    if (comments >= 4) return true;
+    if (docs >= 1 && comments >= 2) return true;
+    return false;
+}
+
 async function createCitadelChannel(guild, userId, member, customName = null) {
 
     const level10Role = guild.roles.cache.find(role => role.name === 'Level 10');
