@@ -1689,41 +1689,6 @@ function startBumpReminderInterval() {
     console.log('✅ Bump reminder system initialized - will remind every 2 hours');
 }
 
-// ===== MANUAL BUMP REMINDER COMMAND (Optional) =====
-// Add this to your slash commands array if you want staff to manually trigger reminders
-const manualBumpCommand = new SlashCommandBuilder()
-    .setName('send_bump_reminder')
-    .setDescription('Manually send a bump reminder to mod-office (Staff only)');
-
-// Add this to your command handlers
-async function handleSendBumpReminderSlashCommand(interaction) {
-    if (!hasStaffPermissions(interaction.member)) {
-        return await sendStaffOnlyMessage(interaction, true);
-    }
-    
-    await interaction.deferReply({ ephemeral: true });
-    
-    try {
-        await sendBumpReminder();
-        
-        const embed = new EmbedBuilder()
-            .setTitle('Bump Reminder Sent ☝️')
-            .setDescription('Manual bump reminder has been sent to all mod-office channels.')
-            .setColor(0x00AA55);
-        
-        await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-        console.error('Error sending manual bump reminder:', error);
-        
-        const errorEmbed = new EmbedBuilder()
-            .setTitle('Bump Reminder Failed ☝️')
-            .setDescription('There was an error sending the bump reminder.')
-            .setColor(0xFF6B6B);
-        
-        await interaction.editReply({ embeds: [errorEmbed] });
-    }
-}
-
 // ===== BOT EVENTS =====
 client.once('ready', async () => {
     console.log(`${client.user.tag} is online and serving Type&Draft with the new feedback system!`);
