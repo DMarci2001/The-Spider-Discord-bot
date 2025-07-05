@@ -1630,16 +1630,13 @@ async function sendBumpReminder() {
             }
             
             // Find the moderator role (try multiple variations)
-            const moderatorRole = guild.roles.cache.find(role => {
+            const bumpRole = guild.roles.cache.find(role => {
                 const roleName = role.name.toLowerCase();
-                return roleName === 'moderator' || 
-                       roleName === 'moderators' || 
-                       roleName === 'mod' || 
-                       roleName === 'mods';
+                return roleName === 'bump';
             });
             
-            if (!moderatorRole) {
-                console.log(`⚠️ Moderator role not found in ${guild.name}`);
+            if (!bumpRole) {
+                console.log(`⚠️ Bump role not found in ${guild.name}`);
                 // Send without ping if no role found
                 const bumpMessage = await modOfficeChannel.send(
                     `**Moderators** - Time to bump the server! Use \`/bump\` to help grow our literary community. ☝️`
@@ -1660,7 +1657,7 @@ async function sendBumpReminder() {
             
             // Send the bump reminder message with role ping
             const bumpMessage = await modOfficeChannel.send(
-                `${moderatorRole} - Time to bump the server!☝️`
+                `${bumpRole} - Time to bump the server!☝️`
             );
             
             console.log(`📢 Bump reminder sent to #${modOfficeChannel.name} in ${guild.name}`);
